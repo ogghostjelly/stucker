@@ -8,7 +8,7 @@ i32 main() {
     set x.fst = 10;
     set x.snd = 20;
 
-    resize(as(&void)&x, 12u64)
+    resize(as(&void)&x.fst, 12u64)
 
-    return x.fst;
+    return x.snd;
 }

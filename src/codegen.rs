@@ -1,11 +1,14 @@
-use std::{collections::HashMap, io};
+use std::{
+    collections::HashMap,
+    io::{self, Cursor, Seek},
+};
 
 use crate::{
     ast::{
         DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
         SetAssignment, Statement, ValueAccess,
     },
-    write_asm,
+    write_asm, write_dat,
 };
 
 pub struct Codegen<W: io::Write> {
@@ -61,6 +64,11 @@ impl<W: io::Write> Codegen<W> {
 
         self.codegen_stdlib()?;
 
+        Ok(())
+    }
+
+    pub fn deinit(&mut self) -> Result<()> {
+        self.nasm.finalize()?;
         Ok(())
     }
 
@@ -256,7 +264,11 @@ impl<W: io::Write> Codegen<W> {
 
                 expr_idx
             }
-            None => self.def.alloc(&mut self.nasm, &var_type)?,
+            None => {
+                self.nasm
+                    .dbg_print(&format!("Allocating struct {var_name}"))?;
+                self.def.alloc(&mut self.nasm, &var_type)?
+            }
         };
 
         var.data.insert(var_name, (var_type, idx));
@@ -545,21 +557,76 @@ impl VarTable {
 
 pub struct Nasm<W: io::Write> {
     writer: W,
-    local_label_index: usize,
+    uniq_index: usize,
     stack_pointer: usize,
+    section_data: Cursor<Vec<u8>>,
 }
 
 impl<W: io::Write> Nasm<W> {
     pub fn new(writer: W) -> Self {
         Self {
             writer,
-            local_label_index: 0,
+            uniq_index: 0,
             stack_pointer: 0,
+            section_data: Cursor::new(Vec::new()),
         }
     }
 
-    pub fn writer(&mut self) -> &mut W {
-        &mut self.writer
+    pub fn finalize(&mut self) -> Result<()> {
+        writeln!(self.writer)?;
+        writeln!(self.writer, "section .data")?;
+        self.section_data.rewind()?;
+        io::copy(&mut self.section_data, &mut self.writer)?;
+        Ok(())
+    }
+}
+
+impl<W: io::Write> Nasm<W> {
+    pub fn dbg_print(&mut self, msg: &str) -> Result<()> {
+        // my debugger output is pretty noise.
+        // print a BUNCH so it's easier to spot in the console.
+        self.sys_write_msg(2, &format!("\x1b[33mDEBUG: {msg}\x1b[0m\n").repeat(4))
+    }
+
+    pub fn sys_write_msg(&mut self, fd: i32, msg: &str) -> Result<()> {
+        fn escape_msg(msg: &str) -> String {
+            let mut ret = String::from('"');
+            for ch in msg.as_bytes() {
+                if *ch >= 32 && *ch <= 126 {
+                    ret.push(*ch as char);
+                } else {
+                    ret.push_str("\", ");
+                    ret.push_str(&format!("0x{ch:0x}"));
+                    ret.push_str(", \"");
+                }
+            }
+            ret.push('"');
+            ret.replace(", \"\"", "")
+        }
+
+        let uniq_name = format!("sys_write_msg_{}", self.uniq_index);
+        self.uniq_index += 1;
+
+        write_dat!(self, "{uniq_name} db {}", escape_msg(msg))?;
+        write_dat!(self, "{uniq_name}_len equ $ -{uniq_name}")?;
+
+        self.push_register("eax", RegisterSize::S32)?;
+        self.push_register("ebx", RegisterSize::S32)?;
+        self.push_register("ecx", RegisterSize::S32)?;
+        self.push_register("edx", RegisterSize::S32)?;
+
+        write_asm!(self, "mov eax, 4")?; // sys_write
+        write_asm!(self, "mov ebx, {fd}")?; // fd
+        write_asm!(self, "mov ecx, {uniq_name}")?; // msg
+        write_asm!(self, "mov edx, {uniq_name}_len")?; // length
+        write_asm!(self, "int 0x80")?;
+
+        self.pop_register("edx")?;
+        self.pop_register("ecx")?;
+        self.pop_register("ebx")?;
+        self.pop_register("eax")?;
+
+        Ok(())
     }
 }
 
@@ -996,7 +1063,7 @@ impl<W: io::Write> Nasm<W> {
         writeln!(self.writer)?;
         let name = format!("_{name}");
         self.raw_label(&name)?;
-        self.local_label_index = 0;
+        self.uniq_index = 0;
         Ok(name)
     }
 
@@ -1014,14 +1081,14 @@ impl<W: io::Write> Nasm<W> {
 
     /// Get the escaped name of a local label.
     pub fn get_local_label_name(&self, name: &str) -> String {
-        format!("._{name}_{}", self.local_label_index)
+        format!("._{name}_{}", self.uniq_index)
     }
 
     /// Write a label directly without any string escaping.
     pub fn raw_label(&mut self, name: &str) -> Result<()> {
         Self::validate_symbol(name);
         writeln!(self.writer, "{name}:")?;
-        self.local_label_index += 1;
+        self.uniq_index += 1;
         Ok(())
     }
 
@@ -1041,8 +1108,17 @@ impl<W: io::Write> Nasm<W> {
 #[macro_export]
 macro_rules! write_asm {
     ($dst:expr, $($arg:tt)*) => {{
-        write!($dst.writer(), "    ")
+        write!($dst.writer, "    ")
             .and_then(|_| writeln!($dst.writer, $($arg)*))
+    }};
+}
+
+#[macro_export]
+macro_rules! write_dat {
+    ($dst:expr, $($arg:tt)*) => {{
+        use std::io::Write;
+        write!($dst.section_data, "    ")
+            .and_then(|_| writeln!($dst.section_data, $($arg)*))
     }};
 }
 

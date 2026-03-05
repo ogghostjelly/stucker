@@ -36,5 +36,7 @@ fn run<R: io::Read>(rdr: R) -> Result<(), Box<dyn std::error::Error>> {
         codegen.codegen(name, value)?;
     }
 
+    codegen.deinit()?;
+
     Ok(())
 }
