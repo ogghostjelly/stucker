@@ -3,7 +3,7 @@ use std::{collections::HashMap, io};
 use crate::{
     ast::{
         DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
-        SetAssignment, Statement,
+        SetAssignment, Statement, ValueAccess,
     },
     write_asm,
 };
@@ -250,7 +250,7 @@ impl<W: io::Write> Codegen<W> {
 
                 expr_idx
             }
-            None => self.nasm.push(self.def.get_init_size(&var_type)?)?,
+            None => self.def.alloc(&mut self.nasm, &var_type)?,
         };
 
         var.data.insert(var_name, (var_type, idx));
@@ -271,7 +271,8 @@ impl<W: io::Write> Codegen<W> {
 
         let (expr_type, src) =
             FunctionCodegen::new(&mut self.nasm, var, &self.def).codegen_expression(var_value)?;
-        let (var_type, dest) = var.get(var_name)?;
+        let (var_type, dest) = var.access(&self.def, var_name)?;
+
         let var_type = if deref {
             var_type.into_ref()?
         } else {
@@ -296,19 +297,33 @@ impl<W: io::Write> Codegen<W> {
 }
 
 impl DefinitionTable {
-    pub fn get_init_size(&self, expr_ty: &ExpressionType) -> Result<u16> {
+    pub fn alloc(
+        &self,
+        nasm: &mut Nasm<impl io::Write>,
+        expr_ty: &ExpressionType,
+    ) -> Result<usize> {
         match expr_ty {
-            ExpressionType::Number(ty) => Ok(ty.size_bytes()),
-            ExpressionType::Struct(k) => match self.struct_table.get(k) {
-                Some(struc) => {
-                    let iter = struc.fields.iter().map(|(ty, _)| self.get_init_size(ty));
-                    let res: Result<Vec<u16>> = iter.collect();
-                    Ok(res?.into_iter().sum())
+            ExpressionType::Number(ty) => nasm.push(ty.size_bytes()),
+            ExpressionType::Struct(k) => {
+                let struc = self.get_struct(k)?;
+                let mut last = None;
+                for (ty, _) in &struc.fields {
+                    last = Some(self.alloc(nasm, ty)?);
                 }
-                None => Err(Error::UnknownType(k.to_string())),
-            },
-            ExpressionType::Ref(ty) => self.get_init_size(ty),
+                Ok(match last {
+                    Some(last) => last,
+                    None => nasm.push(0)?,
+                })
+            }
+            ExpressionType::Ref(_) => nasm.push(8), // references are 64-bit
             ExpressionType::Void => Ok(0),
+        }
+    }
+
+    pub fn get_struct(&self, struc: &str) -> Result<&DefinedStruct> {
+        match self.struct_table.get(struc) {
+            Some(struc) => Ok(struc),
+            None => Err(Error::UnknownType(struc.to_string())),
         }
     }
 }
@@ -330,7 +345,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                 Some(func) => self.codegen_call(func, k, expressions),
                 None => Err(Error::UnknownFunction(k)),
             },
-            Expression::Symbol(k) => self.var.get(k),
+            Expression::Symbol(access) => self.var.access(self.def, access),
             Expression::Number(number) => self.codegen_number(number),
             Expression::BinOp(binop) => self.codegen_binop(*binop),
             Expression::Ref(expr) => {
@@ -375,8 +390,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         }
 
         let ret_idx = if func.return_type != ExpressionType::Void {
-            let ret_size = self.def.get_init_size(&func.return_type)?;
-            self.nasm.push(ret_size)?
+            self.def.alloc(self.nasm, &func.return_type)?
         } else {
             self.nasm.stack_pointer
         };
@@ -486,11 +500,37 @@ impl VarTable {
         }
     }
 
-    pub fn get(&self, k: String) -> Result<(ExpressionType, usize)> {
+    pub fn access(
+        &self,
+        def: &DefinitionTable,
+        access: ValueAccess,
+    ) -> Result<(ExpressionType, usize)> {
+        let ValueAccess(variable, fields) = access;
+        let mut expr = self.get_symbol(variable)?;
+
+        for field_name in fields {
+            let (ExpressionType::Struct(struc_name), expr_idx) = expr else {
+                return Err(Error::CannotAccessField);
+            };
+
+            let struc = def.get_struct(&struc_name)?;
+            let mut fields = struc.fields.iter().enumerate();
+            let fields = fields.find(|(_, (_, f))| field_name == *f);
+
+            match fields {
+                Some((offset, (field_ty, _))) => expr = (field_ty.clone(), expr_idx - offset),
+                None => return Err(Error::UnknownField(struc_name, field_name)),
+            }
+        }
+
+        Ok(expr)
+    }
+
+    pub fn get_symbol(&self, k: String) -> Result<(ExpressionType, usize)> {
         match self.data.get(&k) {
             Some(x) => Ok(x.clone()),
             None => match &self.outer {
-                Some(outer) => outer.get(k),
+                Some(outer) => outer.get_symbol(k),
                 None => Err(Error::UnknownSymbol(k)),
             },
         }
@@ -898,10 +938,11 @@ impl<W: io::Write> Nasm<W> {
 
         let end = self.stack_pointer;
 
+        write_asm!(self, "; return")?;
         for _ in start..self.stack_pointer {
             write_asm!(self, "add rsp, [rsp] ; return (pop)")?;
         }
-        write_asm!(self, "sub rbp, {}", end - start)?;
+        write_asm!(self, "sub rbp, {} ; return (dec_stack)", end - start)?;
         self.pop_register("rax")?;
         write_asm!(self, "jmp rax")?;
         Ok(())
@@ -1014,4 +1055,8 @@ pub enum Error {
     UnknownType(String),
     #[error("invalid signature for main function, expected 'i32 ()'")]
     MainInvalidSignature,
+    #[error(".field access is only applicable to structs")]
+    CannotAccessField,
+    #[error("unknown field {0}.{0}")]
+    UnknownField(String, String),
 }

@@ -36,7 +36,7 @@ impl<R: io::Read> Tokenizer<R> {
     }
 
     fn is_begin_number(ch: u8) -> bool {
-        ch.is_ascii_digit() || ch == b'.' || ch == b'-'
+        ch.is_ascii_digit() || ch == b'-'
     }
     fn is_valid_number(ch: u8) -> bool {
         ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'-'

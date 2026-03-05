@@ -1,12 +1,14 @@
+struct Vec3 {
+    u64 x,
+    u64 y,
+    u64 z,
+}
+
 i32 main() {
-    def u64 x = 0u64;
-    def &u64 ref = &x;
+    def Vec3 x;
 
-    # resize the u64 on the stack to be 32 bytes
-    resize(as(&void)ref, 32u64);
+    set x.x = 5u64;
+    set x.x = 3u64;
 
-    set *ref = 10u64;
-
-    # the 'as' keyword does a bitwise cast
-    return *as(&i32)ref;
+    return as(i32)x.x;
 }

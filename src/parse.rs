@@ -3,7 +3,7 @@ use std::{fmt, io, mem};
 use crate::{
     ast::{
         DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
-        SetAssignment, Statement, Struct,
+        SetAssignment, Statement, Struct, ValueAccess,
     },
     tokenize::{self, Token, Tokenizer},
 };
@@ -133,7 +133,7 @@ impl<R: io::Read> Parser<R> {
         let ident = self.next_symbol()?;
 
         if !matches!(self.peek_token(), Some(Token::Operand('('))) {
-            return Ok(Expression::Symbol(ident));
+            return Ok(Expression::Symbol(self.parse_value_access(ident)?));
         }
         _ = self.next_token()?; // eat the '('
 
@@ -200,7 +200,8 @@ impl<R: io::Read> Parser<R> {
             false
         };
 
-        let var_name = self.next_symbol()?;
+        let fst = self.next_symbol()?;
+        let var_name = self.parse_value_access(fst)?;
 
         self.expect_operand('=')?;
         let var_value = self.parse_expr()?;
@@ -253,6 +254,17 @@ impl<R: io::Read> Parser<R> {
             "void" => ExpressionType::Void,
             _ => ExpressionType::Struct(sym),
         })
+    }
+
+    pub fn parse_value_access(&mut self, fst: String) -> Result<ValueAccess> {
+        let mut rest = vec![];
+
+        while let Some(Token::Operand('.')) = self.peek_token() {
+            _ = self.next_token()?;
+            rest.push(self.next_symbol()?);
+        }
+
+        Ok(ValueAccess(fst, rest))
     }
 
     pub fn parse_block(&mut self) -> Result<Vec<Statement>> {
@@ -410,7 +422,7 @@ impl fmt::Debug for Expression {
                 Number::F32(x) => write!(f, "{x}f32"),
                 Number::F64(x) => write!(f, "{x}f64"),
             },
-            Expression::Symbol(sym) => write!(f, "{sym}"),
+            Expression::Symbol(sym) => write!(f, "{sym:?}"),
             Expression::BinOp(inn) => {
                 let (lhs, op, rhs) = inn.as_ref();
                 write!(f, "({lhs:?} {op} {rhs:?})")
@@ -428,8 +440,8 @@ impl fmt::Debug for Expression {
 impl fmt::Debug for DefAssignment {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.var_value {
-            Some(x) => write!(f, "{} {} = {x:?}", self.var_type, self.var_name),
-            None => write!(f, "{} {};", self.var_type, self.var_name),
+            Some(x) => write!(f, "{} {:?} = {x:?}", self.var_type, self.var_name),
+            None => write!(f, "{} {:?};", self.var_type, self.var_name),
         }
     }
 }
@@ -439,7 +451,17 @@ impl fmt::Debug for SetAssignment {
         if self.deref {
             write!(f, "*")?;
         }
-        write!(f, "{} = {:?}", self.var_name, self.var_value)
+        write!(f, "{:?} = {:?}", self.var_name, self.var_value)
+    }
+}
+
+impl fmt::Debug for ValueAccess {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        for x in &self.1 {
+            write!(f, ".{x}")?;
+        }
+        Ok(())
     }
 }
 

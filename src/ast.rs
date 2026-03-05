@@ -90,7 +90,7 @@ impl fmt::Display for NumberType {
 pub enum Expression {
     Call(String, Vec<Expression>),
     Number(Number),
-    Symbol(String),
+    Symbol(ValueAccess),
     BinOp(Box<(Expression, char, Expression)>),
     Ref(Box<Expression>),
     Deref(Box<Expression>),
@@ -160,7 +160,10 @@ pub struct DefAssignment {
 }
 
 pub struct SetAssignment {
-    pub var_name: String,
+    pub var_name: ValueAccess,
     pub var_value: Expression,
     pub deref: bool,
 }
+
+/// Like `a.b.c`
+pub struct ValueAccess(pub String, pub Vec<String>);
