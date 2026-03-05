@@ -106,14 +106,14 @@ pub enum ExpressionType {
 }
 
 impl ExpressionType {
-    pub fn to_number(self) -> Result<NumberType, Error> {
+    pub fn into_number(self) -> Result<NumberType, Error> {
         match self {
             ExpressionType::Number(number) => Ok(number),
             _ => Err(Error::ExpectedNumber(self)),
         }
     }
 
-    pub fn to_ref(self) -> Result<ExpressionType, Error> {
+    pub fn into_ref(self) -> Result<ExpressionType, Error> {
         match self {
             ExpressionType::Ref(expr) => Ok(*expr),
             _ => Err(Error::ExpectedRef(self)),

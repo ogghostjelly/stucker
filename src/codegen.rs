@@ -124,7 +124,7 @@ impl<W: io::Write> Codegen<W> {
 
     pub fn codegen_prologue(&mut self, return_type: &ExpressionType, name: &str) -> Result<()> {
         self.nasm.new_stack()?;
-        self.nasm.global_label(&name)?;
+        self.nasm.global_label(name)?;
 
         if *return_type != ExpressionType::Void {
             let _ret_idx = self.nasm.push_supress();
@@ -272,7 +272,11 @@ impl<W: io::Write> Codegen<W> {
         let (expr_type, src) =
             FunctionCodegen::new(&mut self.nasm, var, &self.def).codegen_expression(var_value)?;
         let (var_type, dest) = var.get(var_name)?;
-        let var_type = if deref { var_type.to_ref()? } else { var_type };
+        let var_type = if deref {
+            var_type.into_ref()?
+        } else {
+            var_type
+        };
 
         if var_type != expr_type {
             return Err(Error::TypeMismatch(var_type, expr_type));
@@ -303,7 +307,7 @@ impl DefinitionTable {
                 }
                 None => Err(Error::UnknownType(k.to_string())),
             },
-            ExpressionType::Ref(ty) => self.get_init_size(&ty),
+            ExpressionType::Ref(ty) => self.get_init_size(ty),
             ExpressionType::Void => Ok(0),
         }
     }
@@ -337,7 +341,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             }
             Expression::Deref(expr) => {
                 let (ref_ty, ref_idx) = self.codegen_expression(*expr)?;
-                let ref_value_ty = ref_ty.to_ref()?;
+                let ref_value_ty = ref_ty.into_ref()?;
 
                 self.nasm.idx2addr("rbx", ref_idx)?;
                 write_asm!(self.nasm, "mov rsi, [rbx+8] ; dereference")?;
@@ -412,11 +416,11 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         if lhs_type != rhs_type {
             return Err(Error::TypeMismatch(lhs_type, rhs_type));
         }
-        let (lhs_type, _) = (lhs_type.to_number()?, rhs_type.to_number()?);
+        let (lhs_type, _) = (lhs_type.into_number()?, rhs_type.into_number()?);
 
         let ret = match op {
-            '+' => self.nasm.add(lhs_type.clone(), lhs, rhs),
-            '-' => self.nasm.sub(lhs_type.clone(), lhs, rhs),
+            '+' => self.nasm.add(lhs_type, lhs, rhs),
+            '-' => self.nasm.sub(lhs_type, lhs, rhs),
             _ => return Err(Error::InvalidOperator(op)),
         }?;
 
@@ -933,7 +937,7 @@ impl<W: io::Write> Nasm<W> {
 impl<W: io::Write> Nasm<W> {
     /// Creates a global label and returns it's escaped name.
     pub fn global_label(&mut self, name: &str) -> Result<String> {
-        write!(self.writer, "\n")?;
+        writeln!(self.writer)?;
         let name = format!("_{name}");
         self.raw_label(&name)?;
         self.local_label_index = 0;

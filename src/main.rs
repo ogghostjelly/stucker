@@ -1,11 +1,12 @@
+#![allow(clippy::eq_op)]
+
 use std::{
     fs::File,
     io::{self, Cursor},
 };
 
+use codegen::Codegen;
 use parse::Parser;
-
-use crate::codegen::Codegen;
 
 mod ast;
 mod codegen;
