@@ -1,0 +1,12 @@
+i32 main() {
+    def u64 x = 0u64;
+    def &u64 ref = &x;
+
+    # resize the u64 on the stack to be 32 bytes
+    resize(as(&void)ref, 32u64);
+
+    set *ref = 10u64;
+
+    # the 'as' keyword does a bitwise cast
+    return *as(&i32)ref;
+}
