@@ -1,14 +1,14 @@
 struct Vec3 {
-    u64 x,
-    u64 y,
-    u64 z,
+    i32 fst,
+    i32 snd,
 }
 
 i32 main() {
     def Vec3 x;
+    set x.fst = 10;
+    set x.snd = 20;
 
-    set x.x = 5u64;
-    set x.x = 3u64;
+    resize(as(&void)&x, 12u64)
 
-    return as(i32)x.x;
+    return x.fst;
 }

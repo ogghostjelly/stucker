@@ -135,6 +135,12 @@ impl<W: io::Write> Codegen<W> {
     }
 
     pub fn codegen_stdlib(&mut self) -> Result<()> {
+        self.nasm.new_stack()?;
+        writeln!(self.nasm.writer)?;
+        self.nasm.raw_label("copy")?;
+        self.nasm.copy_impl()?;
+        write_asm!(self.nasm, "jmp rax")?;
+
         self.codegen_builtin(
             "resize".into(),
             ExpressionType::Void,
@@ -151,7 +157,7 @@ impl<W: io::Write> Codegen<W> {
                 write_asm!(c.nasm, "mov rdx, [rdx+8] ; builtin_resize")?;
                 write_asm!(c.nasm, "add rdx, 8 ; builtin_resize")?; // account for the 8-byte size tag
 
-                c.nasm.resize()?;
+                c.nasm.resize_impl()?;
 
                 Ok(())
             },
@@ -306,12 +312,12 @@ impl DefinitionTable {
             ExpressionType::Number(ty) => nasm.push(ty.size_bytes()),
             ExpressionType::Struct(k) => {
                 let struc = self.get_struct(k)?;
-                let mut last = None;
+                let mut first = None;
                 for (ty, _) in &struc.fields {
-                    last = Some(self.alloc(nasm, ty)?);
+                    first.get_or_insert(self.alloc(nasm, ty)?);
                 }
-                Ok(match last {
-                    Some(last) => last,
+                Ok(match first {
+                    Some(first) => first,
                     None => nasm.push(0)?,
                 })
             }
@@ -518,7 +524,7 @@ impl VarTable {
             let fields = fields.find(|(_, (_, f))| field_name == *f);
 
             match fields {
-                Some((offset, (field_ty, _))) => expr = (field_ty.clone(), expr_idx - offset),
+                Some((offset, (field_ty, _))) => expr = (field_ty.clone(), expr_idx + offset),
                 None => return Err(Error::UnknownField(struc_name, field_name)),
             }
         }
@@ -735,6 +741,16 @@ impl<W: io::Write> Nasm<W> {
     ///
     /// NOTE: this function uses references not addresses!
     pub fn copy(&mut self) -> Result<()> {
+        let ret = self.get_local_label_name("copy_return");
+
+        write_asm!(self, "lea rax, [{ret}]")?;
+        write_asm!(self, "jmp copy")?;
+
+        self.raw_label(&ret)?;
+        Ok(())
+    }
+
+    pub fn copy_impl(&mut self) -> Result<()> {
         self.push_register("rsi", RegisterSize::S64)?;
         self.ref2addr("rsi", "rcx")?;
         self.push_register("rdi", RegisterSize::S64)?;
@@ -742,22 +758,21 @@ impl<W: io::Write> Nasm<W> {
 
         write_asm!(self, "mov rbx, rdi ; copy (pass params)")?;
         write_asm!(self, "mov rdx, [rsi] ; copy (pass params)")?;
-        self.resize()?;
+        self.resize_impl()?;
 
-        // here
         self.pop_register("rdi")?;
         self.ref2addr("rdi", "rcx")?;
         self.pop_register("rsi")?;
         self.ref2addr("rsi", "rcx")?;
 
-        self.copy_raw()?;
+        self.copy_raw_impl()?;
 
         Ok(())
     }
 
     /// Copy data from `rsi` to `rdi`.
     /// Expects that the data at `rsi` and `rdi` will be the same size.
-    pub fn copy_raw(&mut self) -> Result<()> {
+    pub fn copy_raw_impl(&mut self) -> Result<()> {
         write_asm!(self, "mov rbx, [rsi] ; copy (size=*rsi)")?;
 
         let ret = self.get_local_label_name("copy_return");
@@ -784,7 +799,7 @@ impl<W: io::Write> Nasm<W> {
     /// Stores the address of the new data in `rbx`.
     ///
     /// Note: the new size in `rdx` includes the 8-byte size tag that is at the start of every stack allocation.
-    pub fn resize(&mut self) -> Result<()> {
+    pub fn resize_impl(&mut self) -> Result<()> {
         let ret = self.get_local_label_name("resize_return");
         let negative = self.get_local_label_name("resize_negative");
 
@@ -994,7 +1009,6 @@ impl<W: io::Write> Nasm<W> {
     pub fn local_label(&mut self, name: &str) -> Result<String> {
         let name = self.get_local_label_name(name);
         self.raw_label(&name)?;
-        self.local_label_index += 1;
         Ok(name)
     }
 
@@ -1007,6 +1021,7 @@ impl<W: io::Write> Nasm<W> {
     pub fn raw_label(&mut self, name: &str) -> Result<()> {
         Self::validate_symbol(name);
         writeln!(self.writer, "{name}:")?;
+        self.local_label_index += 1;
         Ok(())
     }
 
