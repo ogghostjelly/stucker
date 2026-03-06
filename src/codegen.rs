@@ -3,6 +3,8 @@ use std::{
     io::{self, Cursor, Seek},
 };
 
+use smallvec::SmallVec;
+
 use crate::{
     ast::{
         DefAssignment, Expression, ExpressionType, FieldAccess, Function, GlobalValue, Number,
@@ -1196,6 +1198,8 @@ impl<W: io::Write> Nasm<W> {
         assert!(name.chars().all(is_valid_char));
     }
 }
+
+struct Index(SmallVec<[u16; 2]>);
 
 #[macro_export]
 macro_rules! write_asm {
