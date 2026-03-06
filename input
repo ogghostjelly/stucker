@@ -1,14 +1,7 @@
-struct Vec3 {
-    i32 fst,
-    i32 snd,
-}
-
 i32 main() {
-    def Vec3 x;
-    set x.fst = 10;
-    set x.snd = 20;
-
-    resize(as(&void)&x.fst, 12u64)
-
-    return x.snd;
+    def []i32 x = [3]i32;
+    set x[0u64] = 1;
+    set x[1u64] = 2;
+    set x[2u64] = 3;
+    return x[0u64];
 }

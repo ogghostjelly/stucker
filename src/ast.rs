@@ -95,6 +95,7 @@ pub enum Expression {
     Ref(Box<Expression>),
     Deref(Box<Expression>),
     As(Box<(ExpressionType, Expression)>),
+    InitArray(Box<(u64, ExpressionType)>),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -102,6 +103,7 @@ pub enum ExpressionType {
     Number(NumberType),
     Struct(String),
     Ref(Box<ExpressionType>),
+    Array(Box<ExpressionType>),
     Void,
 }
 
@@ -127,6 +129,7 @@ impl fmt::Display for ExpressionType {
             ExpressionType::Number(x) => write!(f, "{x}"),
             ExpressionType::Struct(x) => write!(f, "{x}"),
             ExpressionType::Ref(x) => write!(f, "&{x}"),
+            ExpressionType::Array(x) => write!(f, "[]{x:?}"),
             ExpressionType::Void => write!(f, "void"),
         }
     }
@@ -166,4 +169,9 @@ pub struct SetAssignment {
 }
 
 /// Like `a.b.c`
-pub struct ValueAccess(pub String, pub Vec<String>);
+pub struct ValueAccess(pub String, pub Vec<FieldAccess>);
+
+pub enum FieldAccess {
+    Struct(String),
+    Array(Box<Expression>),
+}

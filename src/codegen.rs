@@ -5,10 +5,10 @@ use std::{
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
-        SetAssignment, Statement, ValueAccess,
+        DefAssignment, Expression, ExpressionType, FieldAccess, Function, GlobalValue, Number,
+        NumberType, SetAssignment, Statement, ValueAccess,
     },
-    write_asm, write_dat,
+    write_asm,
 };
 
 pub struct Codegen<W: io::Write> {
@@ -264,11 +264,7 @@ impl<W: io::Write> Codegen<W> {
 
                 expr_idx
             }
-            None => {
-                self.nasm
-                    .dbg_print(&format!("Allocating struct {var_name}"))?;
-                self.def.alloc(&mut self.nasm, &var_type)?
-            }
+            None => self.def.alloc(&mut self.nasm, &var_type)?,
         };
 
         var.data.insert(var_name, (var_type, idx));
@@ -289,7 +285,8 @@ impl<W: io::Write> Codegen<W> {
 
         let (expr_type, src) =
             FunctionCodegen::new(&mut self.nasm, var, &self.def).codegen_expression(var_value)?;
-        let (var_type, dest) = var.access(&self.def, var_name)?;
+        let (var_type, dest) =
+            FunctionCodegen::new(&mut self.nasm, var, &self.def).access(var_name)?;
 
         let var_type = if deref {
             var_type.into_ref()?
@@ -334,7 +331,29 @@ impl DefinitionTable {
                 })
             }
             ExpressionType::Ref(_) => nasm.push(8), // references are 64-bit
-            ExpressionType::Void => Ok(0),
+            ExpressionType::Array(_) => nasm.push(0),
+            ExpressionType::Void => Err(Error::CannotAllocVoid),
+        }
+    }
+
+    pub fn alloc_hidden(
+        &self,
+        nasm: &mut Nasm<impl io::Write>,
+        expr_ty: &ExpressionType,
+    ) -> Result<u16> {
+        match expr_ty {
+            ExpressionType::Number(ty) => nasm.push_hidden(ty.size_bytes()),
+            ExpressionType::Struct(k) => {
+                let struc = self.get_struct(k)?;
+                let mut size = 0;
+                for (ty, _) in &struc.fields {
+                    size += self.alloc_hidden(nasm, ty)?;
+                }
+                Ok(size)
+            }
+            ExpressionType::Ref(_) => nasm.push_hidden(8), // references are 64-bit
+            ExpressionType::Array(_) => nasm.push_hidden(0),
+            ExpressionType::Void => Err(Error::CannotAllocVoid),
         }
     }
 
@@ -363,7 +382,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                 Some(func) => self.codegen_call(func, k, expressions),
                 None => Err(Error::UnknownFunction(k)),
             },
-            Expression::Symbol(access) => self.var.access(self.def, access),
+            Expression::Symbol(access) => self.access(access),
             Expression::Number(number) => self.codegen_number(number),
             Expression::BinOp(binop) => self.codegen_binop(*binop),
             Expression::Ref(expr) => {
@@ -382,6 +401,17 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
 
                 let expr_idx = self.nasm.push_copy_addr()?;
                 Ok((ref_value_ty, expr_idx))
+            }
+            Expression::InitArray(inn) => {
+                let (len, ty) = *inn;
+
+                let mut size = 0;
+                for _ in 0..len {
+                    size += self.def.alloc_hidden(self.nasm, &ty)?;
+                }
+                let arr_idx = self.nasm.push_size_tag(size)?;
+
+                Ok((ExpressionType::Array(Box::new(ty)), arr_idx))
             }
             Expression::As(inn) => {
                 let (ty, inn) = *inn;
@@ -502,6 +532,51 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
 
         Ok((ExpressionType::Number(numtype), idx))
     }
+
+    pub fn access(&mut self, access: ValueAccess) -> Result<(ExpressionType, usize)> {
+        let ValueAccess(variable, fields) = access;
+        let mut expr = self.var.get_symbol(variable)?;
+
+        for field_name in fields {
+            match field_name {
+                FieldAccess::Struct(field_name) => {
+                    let (ExpressionType::Struct(struc_name), expr_idx) = expr else {
+                        return Err(Error::CannotAccessField);
+                    };
+
+                    let struc = self.def.get_struct(&struc_name)?;
+                    let mut fields = struc.fields.iter().enumerate();
+                    let fields = fields.find(|(_, (_, f))| field_name == *f);
+
+                    match fields {
+                        Some((offset, (field_ty, _))) => {
+                            expr = (field_ty.clone(), expr_idx + offset)
+                        }
+                        None => return Err(Error::UnknownField(struc_name, field_name)),
+                    }
+                }
+                FieldAccess::Array(idx_expr) => {
+                    let (ExpressionType::Array(elem_ty), arr_idx) = expr else {
+                        return Err(Error::CannotAccessindex);
+                    };
+
+                    let (idx_ty, index_idx) = self.codegen_expression(*idx_expr)?;
+
+                    if ExpressionType::Number(NumberType::U64) != idx_ty {
+                        return Err(Error::TypeMismatch(
+                            ExpressionType::Number(NumberType::U64),
+                            idx_ty,
+                        ));
+                    }
+
+                    let idx = self.nasm.index_array(arr_idx, index_idx)?;
+                    expr = (*elem_ty, idx);
+                }
+            }
+        }
+
+        Ok(expr)
+    }
 }
 
 #[derive(Default, Clone)]
@@ -516,32 +591,6 @@ impl VarTable {
             outer: outer.map(Box::new),
             data: HashMap::new(),
         }
-    }
-
-    pub fn access(
-        &self,
-        def: &DefinitionTable,
-        access: ValueAccess,
-    ) -> Result<(ExpressionType, usize)> {
-        let ValueAccess(variable, fields) = access;
-        let mut expr = self.get_symbol(variable)?;
-
-        for field_name in fields {
-            let (ExpressionType::Struct(struc_name), expr_idx) = expr else {
-                return Err(Error::CannotAccessField);
-            };
-
-            let struc = def.get_struct(&struc_name)?;
-            let mut fields = struc.fields.iter().enumerate();
-            let fields = fields.find(|(_, (_, f))| field_name == *f);
-
-            match fields {
-                Some((offset, (field_ty, _))) => expr = (field_ty.clone(), expr_idx + offset),
-                None => return Err(Error::UnknownField(struc_name, field_name)),
-            }
-        }
-
-        Ok(expr)
     }
 
     pub fn get_symbol(&self, k: String) -> Result<(ExpressionType, usize)> {
@@ -581,7 +630,7 @@ impl<W: io::Write> Nasm<W> {
     }
 }
 
-impl<W: io::Write> Nasm<W> {
+/*impl<W: io::Write> Nasm<W> {
     pub fn dbg_print(&mut self, msg: &str) -> Result<()> {
         // my debugger output is pretty noise.
         // print a BUNCH so it's easier to spot in the console.
@@ -628,7 +677,7 @@ impl<W: io::Write> Nasm<W> {
 
         Ok(())
     }
-}
+}*/
 
 impl<W: io::Write> Nasm<W> {
     pub fn add(&mut self, numtype: NumberType, lhs: usize, rhs: usize) -> Result<usize> {
@@ -757,6 +806,29 @@ impl<W: io::Write> Nasm<W> {
         Ok(idx)
     }
 
+    /// Manually push a size tag onto the stack.
+    /// The `size` parameter is the size of the data excluding the 8-byte size tag.
+    /// `push_size_tag(0)` will store a size tag with a value of `8`.
+    pub fn push_size_tag(&mut self, size: u16) -> Result<usize> {
+        let idx = self.stack_pointer;
+        self.inc_stack()?;
+
+        let size = size + 8;
+        write_asm!(self, "sub rsp, 8 ; push")?;
+        write_asm!(self, "mov qword [rsp], {size} ; push")?;
+
+        Ok(idx)
+    }
+
+    /// Push data onto the stack but don't increment the stack pointer, return the size allocated.
+    /// This is used to push data into an array because the data isn't on the stack but inside the array.
+    pub fn push_hidden(&mut self, size: u16) -> Result<u16> {
+        let size = size + 8;
+        write_asm!(self, "sub rsp, {size} ; push")?;
+        write_asm!(self, "mov qword [rsp], {size} ; push")?;
+        Ok(size)
+    }
+
     /// Push data onto the stack but don't generate any assembly instructions to do so.
     /// Use this when external code pushes from the stack.
     pub fn push_supress(&mut self) -> usize {
@@ -768,6 +840,26 @@ impl<W: io::Write> Nasm<W> {
     /// Push a copy of some data onto the top of the stack.
     pub fn push_copy(&mut self, idx: usize) -> Result<usize> {
         self.idx2addr("rsi", idx)?; // rsi = src ptr
+        self.push_copy_addr()
+    }
+
+    /// Copy the element at index `rcx` in the array at `rsi` onto the top of the stack.
+    pub fn index_array(&mut self, arr_idx: usize, index_idx: usize) -> Result<usize> {
+        self.idx2addr("rsi", arr_idx)?;
+        self.idx2addr("rcx", index_idx)?;
+
+        write_asm!(self, "mov rcx, [rsp+8]")?;
+        write_asm!(self, "add rsi, 8")?;
+
+        let ret = self.get_local_label_name("array_access_return");
+        let body = self.local_label("array_access_body")?;
+        write_asm!(self, "cmp rcx, 0")?;
+        write_asm!(self, "je {ret}")?;
+        write_asm!(self, "add rsi, [rsi]")?;
+        write_asm!(self, "sub rcx, 1")?;
+        write_asm!(self, "jmp {body}")?;
+        self.raw_label(&ret)?;
+
         self.push_copy_addr()
     }
 
@@ -1146,8 +1238,12 @@ pub enum Error {
     UnknownType(String),
     #[error("invalid signature for main function, expected 'i32 ()'")]
     MainInvalidSignature,
-    #[error(".field access is only applicable to structs")]
+    #[error("struct.field access is only applicable to structs")]
     CannotAccessField,
+    #[error("array[_] access is only applicable to arrays")]
+    CannotAccessindex,
     #[error("unknown field {0}.{0}")]
     UnknownField(String, String),
+    #[error("cannot allocate a void type")]
+    CannotAllocVoid,
 }

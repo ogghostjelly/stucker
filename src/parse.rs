@@ -2,8 +2,8 @@ use std::{fmt, io, mem};
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
-        SetAssignment, Statement, Struct, ValueAccess,
+        DefAssignment, Expression, ExpressionType, FieldAccess, Function, GlobalValue, Number,
+        NumberType, SetAssignment, Statement, Struct, ValueAccess,
     },
     tokenize::{self, Token, Tokenizer},
 };
@@ -114,6 +114,22 @@ impl<R: io::Read> Parser<R> {
             Some(Token::Operand('*')) => {
                 _ = self.next_token()?;
                 Ok(Expression::Deref(Box::new(self.parse_primary()?)))
+            }
+            Some(Token::Operand('[')) => {
+                _ = self.next_token()?;
+                let len = match self.parse_number()? {
+                    Expression::Number(Number::I8(x)) if x.is_positive() => x as u64,
+                    Expression::Number(Number::I16(x)) if x.is_positive() => x as u64,
+                    Expression::Number(Number::I32(x)) if x.is_positive() => x as u64,
+                    Expression::Number(Number::I64(x)) if x.is_positive() => x as u64,
+                    Expression::Number(Number::U8(x)) => x as u64,
+                    Expression::Number(Number::U16(x)) => x as u64,
+                    Expression::Number(Number::U32(x)) => x as u64,
+                    Expression::Number(Number::U64(x)) => x,
+                    _ => return Err(Error::InvalidArrayIndex),
+                };
+                self.expect_operand(']')?;
+                Ok(Expression::InitArray(Box::new((len, self.parse_type()?))))
             }
             Some(Token::Symbol(s)) if s == "as" => {
                 _ = self.next_token()?;
@@ -234,6 +250,12 @@ impl<R: io::Read> Parser<R> {
     }
 
     pub fn parse_type(&mut self) -> Result<ExpressionType> {
+        if let Some(Token::Operand('[')) = self.peek_token() {
+            _ = self.next_token()?;
+            self.expect_operand(']')?;
+            return Ok(ExpressionType::Array(Box::new(self.parse_type()?)));
+        }
+
         if let Some(Token::Operand('&')) = self.peek_token() {
             _ = self.next_token()?;
             return Ok(ExpressionType::Ref(Box::new(self.parse_type()?)));
@@ -259,9 +281,20 @@ impl<R: io::Read> Parser<R> {
     pub fn parse_value_access(&mut self, fst: String) -> Result<ValueAccess> {
         let mut rest = vec![];
 
-        while let Some(Token::Operand('.')) = self.peek_token() {
-            _ = self.next_token()?;
-            rest.push(self.next_symbol()?);
+        loop {
+            if let Some(Token::Operand('.')) = self.peek_token() {
+                _ = self.next_token()?;
+                rest.push(FieldAccess::Struct(self.next_symbol()?));
+                continue;
+            }
+            if let Some(Token::Operand('[')) = self.peek_token() {
+                _ = self.next_token()?;
+                let idx = self.parse_expr()?;
+                self.expect_operand(']')?;
+                rest.push(FieldAccess::Array(Box::new(idx)));
+                continue;
+            }
+            break;
         }
 
         Ok(ValueAccess(fst, rest))
@@ -360,6 +393,8 @@ pub enum Error {
     UnknownToken,
     #[error("expected number")]
     ExpectedNumber,
+    #[error("only unsigned integers are allowed in array index")]
+    InvalidArrayIndex,
 }
 
 impl fmt::Debug for GlobalValue {
@@ -433,6 +468,10 @@ impl fmt::Debug for Expression {
                 let (ty, expr) = inn.as_ref();
                 write!(f, "as({ty})({expr:?})")
             }
+            Expression::InitArray(inn) => {
+                let (size, ty) = inn.as_ref();
+                write!(f, "[{size:?}]{ty}")
+            }
         }
     }
 }
@@ -459,7 +498,10 @@ impl fmt::Debug for ValueAccess {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)?;
         for x in &self.1 {
-            write!(f, ".{x}")?;
+            match x {
+                FieldAccess::Struct(x) => write!(f, ".{x}")?,
+                FieldAccess::Array(x) => write!(f, "[{x:?}]")?,
+            }
         }
         Ok(())
     }
