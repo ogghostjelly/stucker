@@ -3,8 +3,6 @@ use std::{
     io::{self, Cursor, Seek},
 };
 
-use smallvec::SmallVec;
-
 use crate::{
     ast::{
         DefAssignment, Expression, ExpressionType, FieldAccess, Function, GlobalValue, Number,
@@ -58,7 +56,7 @@ impl<W: io::Write> Codegen<W> {
                 vec![],
             )?;
 
-        self.nasm.idx2addr("rbx", idx)?;
+        self.nasm.idx2addr("rbx", &idx)?;
         write_asm!(self.nasm, "mov ebx, [rbx+8]")?;
 
         write_asm!(self.nasm, "mov eax, 1")?;
@@ -159,11 +157,11 @@ impl<W: io::Write> Codegen<W> {
                 ExpressionType::Number(NumberType::U64),
             ],
             |c, p| {
-                c.nasm.idx2addr("rbx", p[0])?;
+                c.nasm.idx2addr("rbx", &p[0])?;
                 write_asm!(c.nasm, "mov rbx, [rbx+8] ; builtin_resize")?;
                 c.nasm.ref2addr("rbx", "rcx")?;
 
-                c.nasm.idx2addr("rdx", p[1])?;
+                c.nasm.idx2addr("rdx", &p[1])?;
                 write_asm!(c.nasm, "mov rdx, [rdx+8] ; builtin_resize")?;
                 write_asm!(c.nasm, "add rdx, 8 ; builtin_resize")?; // account for the 8-byte size tag
 
@@ -181,7 +179,7 @@ impl<W: io::Write> Codegen<W> {
         name: String,
         return_type: ExpressionType,
         params: Vec<ExpressionType>,
-        body: impl FnOnce(&mut Self, Vec<usize>) -> Result<()>,
+        body: impl FnOnce(&mut Self, Vec<Index>) -> Result<()>,
     ) -> Result<()> {
         self.codegen_prologue(&return_type, &name)?;
 
@@ -222,9 +220,12 @@ impl<W: io::Write> Codegen<W> {
                     return Err(Error::TypeMismatch(return_type.clone(), expr_ty));
                 }
 
-                self.nasm.idx2ref("rsi", expr_idx)?;
-                self.nasm.idx2ref("rdi", 0)?;
-                self.nasm.copy()?;
+                if *return_type != ExpressionType::Void {
+                    self.nasm.idx2ref("rsi", &expr_idx)?;
+                    // `0` is the index of the return value
+                    self.nasm.idx2ref("rdi", &Index::new(0))?;
+                    self.nasm.copy()?;
+                }
 
                 Ok(())
             }
@@ -300,12 +301,12 @@ impl<W: io::Write> Codegen<W> {
             return Err(Error::TypeMismatch(var_type, expr_type));
         }
 
-        self.nasm.idx2ref("rsi", src)?;
+        self.nasm.idx2ref("rsi", &src)?;
         if deref {
-            self.nasm.idx2addr("rdi", dest)?;
+            self.nasm.idx2addr("rdi", &dest)?;
             write_asm!(self.nasm, "mov rdi, [rdi+8] ; set_assignment (dereference)")?;
         } else {
-            self.nasm.idx2ref("rdi", dest)?;
+            self.nasm.idx2ref("rdi", &dest)?;
         }
         self.nasm.copy()?;
 
@@ -318,7 +319,7 @@ impl DefinitionTable {
         &self,
         nasm: &mut Nasm<impl io::Write>,
         expr_ty: &ExpressionType,
-    ) -> Result<usize> {
+    ) -> Result<Index> {
         match expr_ty {
             ExpressionType::Number(ty) => nasm.push(ty.size_bytes()),
             ExpressionType::Struct(k) => {
@@ -378,7 +379,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         Self { nasm, var, def }
     }
 
-    pub fn codegen_expression(&mut self, expr: Expression) -> Result<(ExpressionType, usize)> {
+    pub fn codegen_expression(&mut self, expr: Expression) -> Result<(ExpressionType, Index)> {
         match expr {
             Expression::Call(k, expressions) => match self.def.fn_table.get(&k) {
                 Some(func) => self.codegen_call(func, k, expressions),
@@ -389,7 +390,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             Expression::BinOp(binop) => self.codegen_binop(*binop),
             Expression::Ref(expr) => {
                 let (expr_type, expr_idx) = self.codegen_expression(*expr)?;
-                self.nasm.idx2ref("rbx", expr_idx)?;
+                self.nasm.idx2ref("rbx", &expr_idx)?;
                 let expr_idx = self.nasm.push_register("rbx", RegisterSize::S64)?;
                 Ok((ExpressionType::Ref(Box::new(expr_type)), expr_idx))
             }
@@ -397,7 +398,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                 let (ref_ty, ref_idx) = self.codegen_expression(*expr)?;
                 let ref_value_ty = ref_ty.into_ref()?;
 
-                self.nasm.idx2addr("rbx", ref_idx)?;
+                self.nasm.idx2addr("rbx", &ref_idx)?;
                 write_asm!(self.nasm, "mov rsi, [rbx+8] ; dereference")?;
                 self.nasm.ref2addr("rsi", "rbx")?;
 
@@ -428,7 +429,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         func: &DefinedFunction,
         name: String,
         expressions: Vec<Expression>,
-    ) -> Result<(ExpressionType, usize)> {
+    ) -> Result<(ExpressionType, Index)> {
         let mut params = Vec::with_capacity(expressions.len());
 
         for expr in expressions {
@@ -442,7 +443,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         let ret_idx = if func.return_type != ExpressionType::Void {
             self.def.alloc(self.nasm, &func.return_type)?
         } else {
-            self.nasm.stack_pointer
+            Index::void()
         };
 
         let ret = self.nasm.get_local_label_name("call_return");
@@ -453,7 +454,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             if *fn_ty != val_ty {
                 return Err(Error::TypeMismatch(fn_ty.clone(), val_ty));
             }
-            self.nasm.push_copy(idx)?;
+            self.nasm.push_copy(&idx)?;
         }
 
         write_asm!(
@@ -473,7 +474,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
     pub fn codegen_binop(
         &mut self,
         (lhs, op, rhs): (Expression, char, Expression),
-    ) -> Result<(ExpressionType, usize)> {
+    ) -> Result<(ExpressionType, Index)> {
         let (lhs_type, lhs) = self.codegen_expression(lhs)?;
         let (rhs_type, rhs) = self.codegen_expression(rhs)?;
 
@@ -483,15 +484,15 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         let (lhs_type, _) = (lhs_type.into_number()?, rhs_type.into_number()?);
 
         let ret = match op {
-            '+' => self.nasm.add(lhs_type, lhs, rhs),
-            '-' => self.nasm.sub(lhs_type, lhs, rhs),
+            '+' => self.nasm.add(lhs_type, &lhs, &rhs),
+            '-' => self.nasm.sub(lhs_type, &lhs, &rhs),
             _ => return Err(Error::InvalidOperator(op)),
         }?;
 
         Ok((ExpressionType::Number(lhs_type), ret))
     }
 
-    pub fn codegen_number(&mut self, number: Number) -> Result<(ExpressionType, usize)> {
+    pub fn codegen_number(&mut self, number: Number) -> Result<(ExpressionType, Index)> {
         let idx = self.nasm.push(number.size_bytes())?;
         let numtype = number.numtype();
 
@@ -535,7 +536,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         Ok((ExpressionType::Number(numtype), idx))
     }
 
-    pub fn access(&mut self, access: ValueAccess) -> Result<(ExpressionType, usize)> {
+    pub fn access(&mut self, access: ValueAccess) -> Result<(ExpressionType, Index)> {
         let ValueAccess(variable, fields) = access;
         let mut expr = self.var.get_symbol(variable)?;
 
@@ -543,7 +544,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             match field_name {
                 FieldAccess::Struct(field_name) => {
                     let (ExpressionType::Struct(struc_name), expr_idx) = expr else {
-                        return Err(Error::CannotAccessField);
+                        return Err(Error::CannotAccessStruct);
                     };
 
                     let struc = self.def.get_struct(&struc_name)?;
@@ -552,27 +553,17 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
 
                     match fields {
                         Some((offset, (field_ty, _))) => {
-                            expr = (field_ty.clone(), expr_idx + offset)
+                            expr = (field_ty.clone(), expr_idx.offset_by(offset as u16)?)
                         }
                         None => return Err(Error::UnknownField(struc_name, field_name)),
                     }
                 }
                 FieldAccess::Array(idx_expr) => {
                     let (ExpressionType::Array(elem_ty), arr_idx) = expr else {
-                        return Err(Error::CannotAccessindex);
+                        return Err(Error::CannotAccessArray);
                     };
 
-                    let (idx_ty, index_idx) = self.codegen_expression(*idx_expr)?;
-
-                    if ExpressionType::Number(NumberType::U64) != idx_ty {
-                        return Err(Error::TypeMismatch(
-                            ExpressionType::Number(NumberType::U64),
-                            idx_ty,
-                        ));
-                    }
-
-                    let idx = self.nasm.index_array(arr_idx, index_idx)?;
-                    expr = (*elem_ty, idx);
+                    todo!();
                 }
             }
         }
@@ -584,7 +575,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
 #[derive(Default, Clone)]
 pub struct VarTable {
     outer: Option<Box<VarTable>>,
-    data: HashMap<String, (ExpressionType, usize)>,
+    data: HashMap<String, (ExpressionType, Index)>,
 }
 
 impl VarTable {
@@ -595,7 +586,7 @@ impl VarTable {
         }
     }
 
-    pub fn get_symbol(&self, k: String) -> Result<(ExpressionType, usize)> {
+    pub fn get_symbol(&self, k: String) -> Result<(ExpressionType, Index)> {
         match self.data.get(&k) {
             Some(x) => Ok(x.clone()),
             None => match &self.outer {
@@ -609,7 +600,7 @@ impl VarTable {
 pub struct Nasm<W: io::Write> {
     writer: W,
     uniq_index: usize,
-    stack_pointer: usize,
+    stack_pointer: u16,
     section_data: Cursor<Vec<u8>>,
 }
 
@@ -682,7 +673,7 @@ impl<W: io::Write> Nasm<W> {
 }*/
 
 impl<W: io::Write> Nasm<W> {
-    pub fn add(&mut self, numtype: NumberType, lhs: usize, rhs: usize) -> Result<usize> {
+    pub fn add(&mut self, numtype: NumberType, lhs: &Index, rhs: &Index) -> Result<Index> {
         match numtype {
             NumberType::I8 => self.op("add", RegisterSize::S8, lhs, rhs),
             NumberType::I16 => self.op("add", RegisterSize::S16, lhs, rhs),
@@ -697,7 +688,7 @@ impl<W: io::Write> Nasm<W> {
         }
     }
 
-    pub fn sub(&mut self, numtype: NumberType, lhs: usize, rhs: usize) -> Result<usize> {
+    pub fn sub(&mut self, numtype: NumberType, lhs: &Index, rhs: &Index) -> Result<Index> {
         match numtype {
             NumberType::I8 => self.op("sub", RegisterSize::S8, lhs, rhs),
             NumberType::I16 => self.op("sub", RegisterSize::S16, lhs, rhs),
@@ -716,9 +707,9 @@ impl<W: io::Write> Nasm<W> {
         &mut self,
         operation: &'static str,
         size: RegisterSize,
-        lhs: usize,
-        rhs: usize,
-    ) -> Result<usize> {
+        lhs: &Index,
+        rhs: &Index,
+    ) -> Result<Index> {
         assert!(operation.chars().all(|c| char::is_ascii_alphabetic(&c)));
 
         let regc = size.c();
@@ -775,7 +766,7 @@ impl RegisterSize {
 
 impl<W: io::Write> Nasm<W> {
     /// Push a register onto the stack.
-    pub fn push_register(&mut self, reg: &str, size: RegisterSize) -> Result<usize> {
+    pub fn push_register(&mut self, reg: &str, size: RegisterSize) -> Result<Index> {
         assert!(reg.chars().all(|c| char::is_ascii_alphabetic(&c)));
 
         let idx = self.push(size.size_bytes())?;
@@ -797,7 +788,7 @@ impl<W: io::Write> Nasm<W> {
     /// Push data onto the stack and returns the index of that data.
     /// This will allocate an extra 8-bytes to store the size of the data.
     /// If you want to access the data you'll have to do `rsp+8`
-    pub fn push(&mut self, size: u16) -> Result<usize> {
+    pub fn push(&mut self, size: u16) -> Result<Index> {
         let idx = self.stack_pointer;
         self.inc_stack()?;
 
@@ -805,13 +796,13 @@ impl<W: io::Write> Nasm<W> {
         write_asm!(self, "sub rsp, {size} ; push")?;
         write_asm!(self, "mov qword [rsp], {size} ; push")?;
 
-        Ok(idx)
+        Ok(Index::new(idx))
     }
 
     /// Manually push a size tag onto the stack.
     /// The `size` parameter is the size of the data excluding the 8-byte size tag.
     /// `push_size_tag(0)` will store a size tag with a value of `8`.
-    pub fn push_size_tag(&mut self, size: u16) -> Result<usize> {
+    pub fn push_size_tag(&mut self, size: u16) -> Result<Index> {
         let idx = self.stack_pointer;
         self.inc_stack()?;
 
@@ -819,7 +810,7 @@ impl<W: io::Write> Nasm<W> {
         write_asm!(self, "sub rsp, 8 ; push")?;
         write_asm!(self, "mov qword [rsp], {size} ; push")?;
 
-        Ok(idx)
+        Ok(Index::new(idx))
     }
 
     /// Push data onto the stack but don't increment the stack pointer, return the size allocated.
@@ -833,40 +824,20 @@ impl<W: io::Write> Nasm<W> {
 
     /// Push data onto the stack but don't generate any assembly instructions to do so.
     /// Use this when external code pushes from the stack.
-    pub fn push_supress(&mut self) -> usize {
+    pub fn push_supress(&mut self) -> Index {
         let idx = self.stack_pointer;
         self.stack_pointer += 1;
-        idx
+        Index::new(idx)
     }
 
     /// Push a copy of some data onto the top of the stack.
-    pub fn push_copy(&mut self, idx: usize) -> Result<usize> {
+    pub fn push_copy(&mut self, idx: &Index) -> Result<Index> {
         self.idx2addr("rsi", idx)?; // rsi = src ptr
         self.push_copy_addr()
     }
 
-    /// Copy the element at index `rcx` in the array at `rsi` onto the top of the stack.
-    pub fn index_array(&mut self, arr_idx: usize, index_idx: usize) -> Result<usize> {
-        self.idx2addr("rsi", arr_idx)?;
-        self.idx2addr("rcx", index_idx)?;
-
-        write_asm!(self, "mov rcx, [rsp+8]")?;
-        write_asm!(self, "add rsi, 8")?;
-
-        let ret = self.get_local_label_name("array_access_return");
-        let body = self.local_label("array_access_body")?;
-        write_asm!(self, "cmp rcx, 0")?;
-        write_asm!(self, "je {ret}")?;
-        write_asm!(self, "add rsi, [rsi]")?;
-        write_asm!(self, "sub rcx, 1")?;
-        write_asm!(self, "jmp {body}")?;
-        self.raw_label(&ret)?;
-
-        self.push_copy_addr()
-    }
-
     /// Push a copy of the data `rsi` points to onto the top of the stack.
-    pub fn push_copy_addr(&mut self) -> Result<usize> {
+    pub fn push_copy_addr(&mut self) -> Result<Index> {
         let idx = self.stack_pointer;
         self.inc_stack()?;
         write_asm!(self, "mov rbx, [rsi] ; push_copy (rbx=size)")?; // rbx = size
@@ -894,7 +865,7 @@ impl<W: io::Write> Nasm<W> {
 
         self.raw_label(&ret)?;
 
-        Ok(idx)
+        Ok(Index::new(idx))
     }
 
     /// Copy data from the references stored in `rsi` to the reference stored in `rdi`.
@@ -1047,7 +1018,17 @@ impl<W: io::Write> Nasm<W> {
     }
 
     /// Converts an index into an address. Stores the address in `ret_reg`.
-    pub fn idx2addr(&mut self, ret_reg: &str, idx: usize) -> Result<()> {
+    pub fn idx2addr(&mut self, ret_reg: &str, idx: &Index) -> Result<()> {
+        let idx = idx.as_valid()?;
+        self.idx2addr_inner(ret_reg, idx.0)?;
+        for idx in &idx.1 {
+            write_asm!(self, "add {ret_reg}, 8")?;
+            self.idx2addr_inner(ret_reg, *idx)?;
+        }
+        Ok(())
+    }
+
+    fn idx2addr_inner(&mut self, ret_reg: &str, idx: u16) -> Result<()> {
         let steps = self.stack_pointer - idx - 1;
 
         write_asm!(self, "mov {ret_reg}, rsp ; idx2addr (i{idx})")?;
@@ -1084,12 +1065,13 @@ impl<W: io::Write> Nasm<W> {
         Ok(())
     }
 
-    /// Converts an index into a reference. Stores the address in `ret_reg`.
-    pub fn idx2ref(&mut self, ret_reg: &str, idx: usize) -> Result<()> {
-        let steps = self.stack_pointer - idx - 1;
+    /// Converts an index into a reference. Stores the reference in `ret_reg`.
+    pub fn idx2ref(&mut self, ret_reg: &str, idx: &Index) -> Result<()> {
+        /*let steps = self.stack_pointer - idx - 1;
         write_asm!(self, "mov {ret_reg}, rbp ; idx2ref")?;
         write_asm!(self, "sub {ret_reg}, {steps} ; idx2ref")?;
-        Ok(())
+        Ok(())*/
+        todo!()
     }
 
     /// Push data from the top of the stack.
@@ -1199,7 +1181,49 @@ impl<W: io::Write> Nasm<W> {
     }
 }
 
-struct Index(SmallVec<[u16; 2]>);
+#[derive(Clone)]
+pub struct Index(Option<ValidIndex>);
+
+#[derive(Clone)]
+pub struct ValidIndex(u16, Vec<u16>);
+
+impl Index {
+    pub fn new(value: u16) -> Self {
+        Self(Some(ValidIndex(value, vec![])))
+    }
+
+    pub fn void() -> Self {
+        Self(None)
+    }
+
+    pub fn valid_mut(&mut self) -> Result<&mut ValidIndex> {
+        match &mut self.0 {
+            Some(idx) => Ok(idx),
+            None => Err(Error::InvalidIndex),
+        }
+    }
+
+    pub fn as_valid(&self) -> Result<&ValidIndex> {
+        match &self.0 {
+            Some(idx) => Ok(idx),
+            None => Err(Error::InvalidIndex),
+        }
+    }
+
+    pub fn last_mut(&mut self) -> Result<&mut u16> {
+        let idx = self.valid_mut()?;
+
+        Ok(match idx.1.last_mut() {
+            Some(last) => last,
+            None => &mut idx.0,
+        })
+    }
+
+    pub fn offset_by(mut self, amount: u16) -> Result<Self> {
+        *self.last_mut()? += amount;
+        Ok(self)
+    }
+}
 
 #[macro_export]
 macro_rules! write_asm {
@@ -1243,11 +1267,13 @@ pub enum Error {
     #[error("invalid signature for main function, expected 'i32 ()'")]
     MainInvalidSignature,
     #[error("struct.field access is only applicable to structs")]
-    CannotAccessField,
+    CannotAccessStruct,
     #[error("array[_] access is only applicable to arrays")]
-    CannotAccessindex,
+    CannotAccessArray,
     #[error("unknown field {0}.{0}")]
     UnknownField(String, String),
     #[error("cannot allocate a void type")]
     CannotAllocVoid,
+    #[error("type mismatch: void (invalid index)")]
+    InvalidIndex,
 }
