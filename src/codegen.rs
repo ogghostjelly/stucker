@@ -1076,30 +1076,6 @@ impl<W: io::Write> Nasm<W> {
         Ok(())
     }
 
-    /// Convert the references in `rdi` and `rsi` into addresses, clobbering all other register.
-    pub fn reg2addr_rdi_rsi(&mut self) -> Result<()> {
-        // this function does a bit of fancy back-and-forth to ensure the right registers don't get clobbered
-
-        // push rdi reference on stack
-        self.push_register("rdi", RegisterSize::S64)?;
-
-        // calculate addr of rsi and push addr on stack
-        write_asm!(self, "mov rbx, rsi")?;
-        self.ref2addr()?;
-        self.pop_register("rdi")?; // pop rdi reference off stack
-        self.push_register("rsi", RegisterSize::S64)?;
-
-        // calculate addr of rdi
-        write_asm!(self, "mov rbx, rdi")?;
-        self.ref2addr()?;
-        write_asm!(self, "mov rdi, rsi")?;
-
-        // pop rsi addr off stack
-        self.pop_register("rsi")?;
-
-        Ok(())
-    }
-
     pub fn ref2addr_impl(&mut self) -> Result<()> {
         // rcx = stop ptr
         write_asm!(self, "mov rcx, rbx")?;
