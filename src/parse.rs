@@ -2,8 +2,8 @@ use std::{fmt, io, mem};
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, FieldAccess, Function, GlobalValue, Number,
-        NumberType, SetAssignment, Statement, Struct, ValueAccess,
+        DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
+        SetAssignment, Statement, Struct,
     },
     tokenize::{self, Token, Tokenizer},
 };
@@ -106,6 +106,25 @@ impl<R: io::Read> Parser<R> {
     }
 
     pub fn parse_primary(&mut self) -> Result<Expression> {
+        let mut expr = self.parse_primary_inner()?;
+        loop {
+            if let Some(Token::Operand('.')) = self.peek_token() {
+                _ = self.next_token()?;
+                let field = self.next_symbol()?;
+                expr = Expression::FieldAccess(Box::new((expr, field)));
+            } else if let Some(Token::Operand('[')) = self.peek_token() {
+                _ = self.next_token()?;
+                let idx = self.parse_expr()?;
+                self.expect_operand(']')?;
+                expr = Expression::ArrayAccess(Box::new((expr, idx)));
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
+    }
+
+    pub fn parse_primary_inner(&mut self) -> Result<Expression> {
         match self.peek_token() {
             Some(Token::Operand('&')) => {
                 _ = self.next_token()?;
@@ -149,7 +168,7 @@ impl<R: io::Read> Parser<R> {
         let ident = self.next_symbol()?;
 
         if !matches!(self.peek_token(), Some(Token::Operand('('))) {
-            return Ok(Expression::Symbol(self.parse_value_access(ident)?));
+            return Ok(Expression::Symbol(ident));
         }
         _ = self.next_token()?; // eat the '('
 
@@ -216,14 +235,13 @@ impl<R: io::Read> Parser<R> {
             false
         };
 
-        let fst = self.next_symbol()?;
-        let var_name = self.parse_value_access(fst)?;
+        let var_dest = self.parse_expr()?;
 
         self.expect_operand('=')?;
-        let var_value = self.parse_expr()?;
+        let var_src = self.parse_expr()?;
         Ok(SetAssignment {
-            var_name,
-            var_value,
+            var_dest,
+            var_src,
             deref,
         })
     }
@@ -276,28 +294,6 @@ impl<R: io::Read> Parser<R> {
             "void" => ExpressionType::Void,
             _ => ExpressionType::Struct(sym),
         })
-    }
-
-    pub fn parse_value_access(&mut self, fst: String) -> Result<ValueAccess> {
-        let mut rest = vec![];
-
-        loop {
-            if let Some(Token::Operand('.')) = self.peek_token() {
-                _ = self.next_token()?;
-                rest.push(FieldAccess::Struct(self.next_symbol()?));
-                continue;
-            }
-            if let Some(Token::Operand('[')) = self.peek_token() {
-                _ = self.next_token()?;
-                let idx = self.parse_expr()?;
-                self.expect_operand(']')?;
-                rest.push(FieldAccess::Array(Box::new(idx)));
-                continue;
-            }
-            break;
-        }
-
-        Ok(ValueAccess(fst, rest))
     }
 
     pub fn parse_block(&mut self) -> Result<Vec<Statement>> {
@@ -472,6 +468,14 @@ impl fmt::Debug for Expression {
                 let (size, ty) = inn.as_ref();
                 write!(f, "[{size:?}]{ty}")
             }
+            Expression::FieldAccess(inn) => {
+                let (expr, field) = inn.as_ref();
+                write!(f, "({expr:?}).{field}")
+            }
+            Expression::ArrayAccess(inn) => {
+                let (expr, idx) = inn.as_ref();
+                write!(f, "({expr:?})[{idx:?}]")
+            }
         }
     }
 }
@@ -490,20 +494,7 @@ impl fmt::Debug for SetAssignment {
         if self.deref {
             write!(f, "*")?;
         }
-        write!(f, "{:?} = {:?}", self.var_name, self.var_value)
-    }
-}
-
-impl fmt::Debug for ValueAccess {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)?;
-        for x in &self.1 {
-            match x {
-                FieldAccess::Struct(x) => write!(f, ".{x}")?,
-                FieldAccess::Array(x) => write!(f, "[{x:?}]")?,
-            }
-        }
-        Ok(())
+        write!(f, "{:?} = {:?}", self.var_dest, self.var_src)
     }
 }
 

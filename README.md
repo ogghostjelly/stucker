@@ -70,7 +70,7 @@ mov dword [rsp+8], 3
 mov qword [rsp], 12
 ```
 
-## References
+## References (`&`)
 
 If you imagine the stack as an array. References are an index into that array. For example, if we have a stack of size `3` and we want to get the value at a reference of `0` then we would jump `2` steps back, from rsp, to reach our data.
 
@@ -89,12 +89,14 @@ Jump back `2` steps:
      rsp
 ```
 
+We can store references to data inside data by storing multiple indexes. For example, if we want to make a reference to the data at `&stack[3][2][6]` we'd store 3 `u16`s (`3`, `2` and `6`) to represent all the indexes. That means deeply nested structures will have very long references and because they are stored as `u16` you can only have up to `65536` stack items or else the reference will overflow.
+
 # Indexes vs References vs Addresses
 
 I use a lot of words to refer to "thing that points to the stack" and every word means something slightly different. I'll define all the terms I use here:
 
 - Indexes (specifically the `Index` struct) is what the compiler uses at compile-time to uniquely identify values in the stack. You can think of it like a path to some data.
-- References are stable pointers to values in the stack. They are still valid even when items before it are resized. They are explained in the [section above](#references). It's basically just an `Index` but at runtime instead of compile-time.
+- References are stable pointers to values in the stack. They are still valid even when items before it are resized. They are explained in the [section above](#references). It's basically just an `Index` but stored at runtime instead of compile-time.
 - Addresses are the raw unstable memory addresses to values in the stack. They (usually) aren't accessible in the language, which means you can't actually get the raw address of a stack item. It's more of a compiler detail, like when you want to read a memory location you'll need to use the `idx2addr` function that generates the right assembly to convert a compile-time `Index` into an address that can be utilized at runtime.
 
 A stable pointer means it will always point to that object and will only be invalidated if that object is deallocated. An unstable pointer may be invalidated if a stack item is resized, causing the stack to shift around.

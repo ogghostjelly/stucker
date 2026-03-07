@@ -90,12 +90,14 @@ impl fmt::Display for NumberType {
 pub enum Expression {
     Call(String, Vec<Expression>),
     Number(Number),
-    Symbol(ValueAccess),
+    Symbol(String),
     BinOp(Box<(Expression, char, Expression)>),
     Ref(Box<Expression>),
     Deref(Box<Expression>),
     As(Box<(ExpressionType, Expression)>),
     InitArray(Box<(u64, ExpressionType)>),
+    FieldAccess(Box<(Expression, String)>),
+    ArrayAccess(Box<(Expression, Expression)>),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -129,7 +131,7 @@ impl fmt::Display for ExpressionType {
             ExpressionType::Number(x) => write!(f, "{x}"),
             ExpressionType::Struct(x) => write!(f, "{x}"),
             ExpressionType::Ref(x) => write!(f, "&{x}"),
-            ExpressionType::Array(x) => write!(f, "[]{x:?}"),
+            ExpressionType::Array(x) => write!(f, "[]{x}"),
             ExpressionType::Void => write!(f, "void"),
         }
     }
@@ -163,15 +165,7 @@ pub struct DefAssignment {
 }
 
 pub struct SetAssignment {
-    pub var_name: ValueAccess,
-    pub var_value: Expression,
+    pub var_dest: Expression,
+    pub var_src: Expression,
     pub deref: bool,
-}
-
-/// Like `a.b.c`
-pub struct ValueAccess(pub String, pub Vec<FieldAccess>);
-
-pub enum FieldAccess {
-    Struct(String),
-    Array(Box<Expression>),
 }
