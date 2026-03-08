@@ -490,52 +490,134 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             Expression::FieldAccess(inn) => {
                 let (expr, field_name) = *inn;
 
-                let (ExpressionType::Struct(struc_name), expr_idx) =
-                    self.codegen_expression(expr)?
-                else {
-                    return Err(Error::CannotAccessStruct);
-                };
+                let (struct_ty, struct_idx) = self.codegen_expression(expr)?;
 
-                let struc = self.def.get_struct(&struc_name)?;
-                let mut fields = struc.fields.iter().enumerate();
-                let fields = fields.find(|(_, (_, f))| field_name == *f);
-
-                match fields {
-                    Some((offset, (field_ty, _))) => {
-                        Ok((field_ty.clone(), expr_idx.offset_by(offset as u16)?))
+                match struct_ty {
+                    ExpressionType::Ref(struct_ty) => match *struct_ty {
+                        ExpressionType::Struct(struct_name) => {
+                            self.codegen_struct_ref_access(struct_name, struct_idx, field_name)
+                        }
+                        _ => Err(Error::CannotAccessStruct),
+                    },
+                    ExpressionType::Struct(struct_name) => {
+                        self.codegen_struct_access(struct_name, struct_idx, field_name)
                     }
-                    None => Err(Error::UnknownField(struc_name, field_name)),
+                    _ => Err(Error::CannotAccessStruct),
                 }
             }
             Expression::ArrayAccess(inn) => {
-                let (expr, idx_expr) = *inn;
+                let (arr_expr, index_expr) = *inn;
 
-                let (ExpressionType::Ref(expr_ty), arr_idx) = self.codegen_expression(expr)? else {
-                    return Err(Error::CannotAccessArray);
-                };
-                let ExpressionType::Array(elem_ty) = *expr_ty else {
-                    return Err(Error::CannotAccessArray);
-                };
+                let (arr_ty, arr_idx) = self.codegen_expression(arr_expr)?;
 
-                let (index_ty, index_idx) = self.codegen_expression(idx_expr)?;
+                let (index_ty, index_idx) = self.codegen_expression(index_expr)?;
                 let index_expected = ExpressionType::Number(NumberType::U16);
                 if index_expected != index_ty {
                     return Err(Error::TypeMismatch(index_expected, index_ty));
                 }
 
-                self.nasm.idx2addr("rsi", &arr_idx)?;
-                self.nasm.idx2addr("rcx", &index_idx)?;
-                write_asm!(self.nasm, "mov cx, [rcx+8]")?;
-
-                // push copy of rsi to stack with cx appended
-                write_asm!(self.nasm, "sub rsp, 2")?;
-                write_asm!(self.nasm, "mov [rsp], cx")?;
-                let idx = self.nasm.push_copy_addr()?;
-                write_asm!(self.nasm, "add qword [rsp], 2")?;
-
-                Ok((ExpressionType::Ref(elem_ty), idx))
+                match arr_ty {
+                    ExpressionType::Ref(arr_ty) => match *arr_ty {
+                        ExpressionType::Array(elem_ty) => {
+                            self.codegen_array_ref_access(elem_ty, arr_idx, index_idx)
+                        }
+                        _ => Err(Error::CannotAccessArray),
+                    },
+                    ExpressionType::Array(elem_ty) => {
+                        self.codegen_array_access(*elem_ty, arr_idx, index_idx)
+                    }
+                    _ => Err(Error::CannotAccessArray),
+                }
             }
         }
+    }
+
+    pub fn codegen_struct_access(
+        &mut self,
+        struct_name: String,
+        struct_idx: Index,
+        field_name: String,
+    ) -> Result<(ExpressionType, Index)> {
+        let struc = self.def.get_struct(&struct_name)?;
+        let mut fields = struc.fields.iter().enumerate();
+        let fields = fields.find(|(_, (_, f))| field_name == *f);
+
+        match fields {
+            Some((offset, (field_ty, _))) => {
+                Ok((field_ty.clone(), struct_idx.offset_by(offset as u16)?))
+            }
+            None => Err(Error::UnknownField(struct_name, field_name)),
+        }
+    }
+
+    pub fn codegen_struct_ref_access(
+        &mut self,
+        struct_name: String,
+        struct_ref_idx: Index,
+        field_name: String,
+    ) -> Result<(ExpressionType, Index)> {
+        let struc = self.def.get_struct(&struct_name)?;
+        let mut fields = struc.fields.iter().enumerate();
+        let fields = fields.find(|(_, (_, f))| field_name == *f);
+
+        let (field_ty, offset) = match fields {
+            Some((offset, (field_ty, _))) => (field_ty.clone(), offset as u16),
+            None => return Err(Error::UnknownField(struct_name, field_name)),
+        };
+
+        self.nasm.idx2addr("rsi", &struct_ref_idx)?;
+        let idx = self.nasm.push_copy_addr()?;
+
+        write_asm!(self.nasm, "mov rbx, rsp")?;
+        write_asm!(self.nasm, "add rbx, [rbx]")?;
+        write_asm!(self.nasm, "sub rbx, 2")?;
+        write_asm!(self.nasm, "add word [rbx], {offset}")?;
+
+        Ok((ExpressionType::Ref(Box::new(field_ty)), idx))
+    }
+
+    pub fn codegen_array_access(
+        &mut self,
+        elem_ty: ExpressionType,
+        arr_idx: Index,
+        index_idx: Index,
+    ) -> Result<(ExpressionType, Index)> {
+        self.nasm.idx2addr("rsi", &arr_idx)?;
+        write_asm!(self.nasm, "add rsi, 8")?;
+        self.nasm.idx2addr("rcx", &index_idx)?;
+        write_asm!(self.nasm, "mov cx, word [rcx+8]")?;
+
+        let ret = self.nasm.get_local_label_name("array_access_return");
+
+        let body = self.nasm.local_label("array_access_body")?;
+        write_asm!(self.nasm, "cmp cx, 0")?;
+        write_asm!(self.nasm, "je {ret}")?;
+        write_asm!(self.nasm, "add rsi, [rsi]")?;
+        write_asm!(self.nasm, "sub cx, 1")?;
+        write_asm!(self.nasm, "jmp {body}")?;
+        self.nasm.raw_label(&ret)?;
+
+        let idx = self.nasm.push_copy_addr()?;
+        Ok((elem_ty, idx))
+    }
+
+    pub fn codegen_array_ref_access(
+        &mut self,
+        elem_ty: Box<ExpressionType>,
+        arr_ref_idx: Index,
+        index_idx: Index,
+    ) -> Result<(ExpressionType, Index)> {
+        self.nasm.idx2addr("rsi", &arr_ref_idx)?;
+        self.nasm.idx2addr("rcx", &index_idx)?;
+        write_asm!(self.nasm, "mov cx, [rcx+8]")?;
+
+        // push copy of rsi to stack with cx appended
+        write_asm!(self.nasm, "sub rsp, 2")?;
+        write_asm!(self.nasm, "mov [rsp], cx")?;
+        let idx = self.nasm.push_copy_addr()?;
+        write_asm!(self.nasm, "add qword [rsp], 2")?;
+
+        Ok((ExpressionType::Ref(elem_ty), idx))
     }
 
     pub fn codegen_call(

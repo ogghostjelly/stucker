@@ -103,34 +103,37 @@ A stable pointer means it will always point to that object and will only be inva
 
 # Notes
 
-## Arrays
+## Array Initialization and Indexing
 
 Array initialization uses `u64`:
 ```
-#     using u64 to create an array
+# using u64 to create an array with 3 elements
 #                 vvv
 def []i32 arr = [3u64]i32;
 ```
 Array indexing uses `u16`:
 ```
-#        using u16 to index into an array
+# using u16 to get the first element of an array
 #                      vvv
 def &i32 arr = (&arr)[0u16];
 ```
 
-You can't index arrays directly:
+## Array Copies
+This won't set the `0`th item of the array:
 ```
-def i32 arr = arr[0u16];
+set arr[0u16] = 0;
 ```
-The above code gives the error:
+Because `arr[0u16]` copies the value, so it assigns `0` to the copy.
+Instead you need to take a reference to it and dereference assign it:
 ```
-array[_] access is only applicable to array references, use `&arr`
+set *(&arr)[0u16] = 0;
 ```
-
-Instead you have to reference and dereference it:
+This is isn't true for structs:
 ```
-def i32 arr = *(&arr)[0u16];
+# this WILL update my_struct
+set my_struct.x = 3;
 ```
+It's only arrays that copy.
 
 ## Most things grow at the start. Structs grow at the end
 ```

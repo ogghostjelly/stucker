@@ -1,10 +1,12 @@
+struct Vec2 {
+    i32 x,
+    i32 y,
+}
+
 i32 main() {
-    def i32 x = 0;
-    if (1 & 0) {
-        set x = 1;
-    } else {
-        set x = 2;
-    }
-    return x;
+    def Vec2 pos;
+    set pos.x = 1;
+    set pos.y = 2;
+    return pos.x;
 }
 

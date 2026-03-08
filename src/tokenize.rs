@@ -51,7 +51,7 @@ impl<R: io::Read> Tokenizer<R> {
     }
 
     fn is_begin_number(ch: u8) -> bool {
-        ch.is_ascii_digit() || ch == b'-' || ch == b'+'
+        ch.is_ascii_digit()
     }
     fn is_valid_number(ch: u8) -> bool {
         ch.is_ascii_alphanumeric() || ch == b'.'
@@ -166,9 +166,9 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("malformed token")]
     MalformedToken,
-    #[error(transparent)]
+    #[error("parse int: {0}")]
     ParseInt(#[from] ParseIntError),
-    #[error(transparent)]
+    #[error("parse float: {0}")]
     ParseFloat(#[from] ParseFloatError),
 }
 
