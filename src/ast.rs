@@ -91,7 +91,7 @@ pub enum Expression {
     Call(String, Vec<Expression>),
     Number(Number),
     Symbol(String),
-    BinOp(Box<(Expression, char, Expression)>),
+    BinOp(Box<(Expression, String, Expression)>),
     Ref(Box<Expression>),
     Deref(Box<Expression>),
     As(Box<(ExpressionType, Expression)>),
@@ -157,6 +157,7 @@ pub enum Statement {
     Return(Option<Expression>),
     Expr(Expression),
     Block(Vec<Statement>),
+    If(Box<(Expression, Statement, Option<Statement>)>),
 }
 
 pub struct DefAssignment {

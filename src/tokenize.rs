@@ -21,25 +21,40 @@ impl<R: io::Read> Tokenizer<R> {
         self.skip_whitespace()?;
 
         match self.peek() {
-            Some(ch) if Self::is_begin_number(ch) => Ok(Some(Token::Number(self.parse_number()?))),
+            Some(ch) if Self::is_begin_number(ch) => {
+                _ = self.pop()?;
+                Ok(Some(Token::Number(self.parse_number(ch)?)))
+            }
             Some(ch) if Self::is_valid_symbol(ch) => Ok(Some(self.parse_symbol()?)),
             Some(ch) if Self::is_begin_comment(ch) => {
                 self.parse_comment()?;
                 self.next_token()
             }
             Some(ch) => {
-                _ = self.pop()?; // eat the operand character
-                Ok(Some(Token::Operand(ch as char)))
+                _ = self.pop()?;
+                let next_ch = self.peek();
+
+                match (ch, next_ch) {
+                    (b'>' | b'<', Some(b'=')) => {
+                        _ = self.pop()?;
+                        Ok(Some(Token::Operand2(ch as char, '=')))
+                    }
+                    (b'&' | b'|' | b'=' | b'<' | b'>', Some(next_ch)) if ch == next_ch => {
+                        _ = self.pop()?;
+                        Ok(Some(Token::Operand2(ch as char, ch as char)))
+                    }
+                    _ => Ok(Some(Token::Operand(ch as char))),
+                }
             }
             None => Ok(None),
         }
     }
 
     fn is_begin_number(ch: u8) -> bool {
-        ch.is_ascii_digit() || ch == b'-'
+        ch.is_ascii_digit() || ch == b'-' || ch == b'+'
     }
     fn is_valid_number(ch: u8) -> bool {
-        ch.is_ascii_alphanumeric() || ch == b'.' || ch == b'-'
+        ch.is_ascii_alphanumeric() || ch == b'.'
     }
     fn is_begin_comment(ch: u8) -> bool {
         ch == b'#'
@@ -54,8 +69,8 @@ impl<R: io::Read> Tokenizer<R> {
         Ok(())
     }
 
-    pub fn parse_number(&mut self) -> Result<Number> {
-        match self.take_while(Self::is_valid_number) {
+    pub fn parse_number(&mut self, begin: u8) -> Result<Number> {
+        match self.take_while(String::from(begin as char), Self::is_valid_number) {
             Ok(Some(string)) => {
                 let opt = string
                     .len()
@@ -94,7 +109,7 @@ impl<R: io::Read> Tokenizer<R> {
     }
 
     pub fn parse_symbol(&mut self) -> Result<Token> {
-        match self.take_while(Self::is_valid_symbol) {
+        match self.take_while(String::new(), Self::is_valid_symbol) {
             Ok(Some(string)) => Ok(Token::Symbol(string)),
             Ok(None) => Err(Error::MalformedToken),
             Err(e) => Err(e),
@@ -125,8 +140,11 @@ impl<R: io::Read> Tokenizer<R> {
         Ok(old)
     }
 
-    pub fn take_while(&mut self, mut f: impl FnMut(u8) -> bool) -> Result<Option<String>> {
-        let mut string = String::new();
+    pub fn take_while(
+        &mut self,
+        mut string: String,
+        mut f: impl FnMut(u8) -> bool,
+    ) -> Result<Option<String>> {
         while matches!(self.peek(), Some(ch) if f(ch)) {
             if let Some(ch) = self.pop()? {
                 string.push(ch as char);
@@ -158,5 +176,6 @@ pub enum Error {
 pub enum Token {
     Symbol(String),
     Operand(char),
+    Operand2(char, char),
     Number(Number),
 }

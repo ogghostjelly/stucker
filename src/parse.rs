@@ -103,12 +103,29 @@ impl<R: io::Read> Parser<R> {
         }
     }
 
-    pub fn peek_precedence(&mut self) -> Result<Option<(char, u64)>> {
+    pub fn peek_precedence(&mut self) -> Result<Option<(String, u64)>> {
         match self.peek_token() {
-            Some(Token::Operand(c @ '+')) => Ok(Some((*c, 20))),
-            Some(Token::Operand(c @ '-')) => Ok(Some((*c, 20))),
-            Some(Token::Operand(c @ '*')) => Ok(Some((*c, 40))),
-            Some(Token::Operand(c @ '/')) => Ok(Some((*c, 40))),
+            Some(Token::Operand('+')) => Ok(Some(("+".into(), 20))),
+            Some(Token::Operand('-')) => Ok(Some(("-".into(), 20))),
+            Some(Token::Operand('*')) => Ok(Some(("*".into(), 40))),
+            Some(Token::Operand('/')) => Ok(Some(("/".into(), 40))),
+            Some(Token::Operand('%')) => Ok(Some(("%".into(), 40))),
+
+            Some(Token::Operand('&')) => Ok(Some(("&".into(), 60))),
+            Some(Token::Operand('|')) => Ok(Some(("|".into(), 60))),
+            Some(Token::Operand('^')) => Ok(Some(("^".into(), 60))),
+            Some(Token::Operand2('<', '<')) => Ok(Some(("<<".into(), 60))),
+            Some(Token::Operand2('>', '>')) => Ok(Some((">>".into(), 60))),
+
+            Some(Token::Operand2('&', '&')) => Ok(Some(("&&".into(), 80))),
+            Some(Token::Operand2('|', '|')) => Ok(Some(("||".into(), 80))),
+
+            Some(Token::Operand('>')) => Ok(Some((">".into(), 100))),
+            Some(Token::Operand2('>', '=')) => Ok(Some((">=".into(), 100))),
+            Some(Token::Operand('<')) => Ok(Some(("<".into(), 100))),
+            Some(Token::Operand2('<', '=')) => Ok(Some(("<=".into(), 100))),
+            Some(Token::Operand2('=', '=')) => Ok(Some(("==".into(), 100))),
+
             _ => Ok(None),
         }
     }
@@ -218,6 +235,23 @@ impl<R: io::Read> Parser<R> {
             Some(Token::Symbol(sym)) if sym == "set" => {
                 _ = self.next_token()?;
                 Ok(Statement::SetAssign(self.parse_set_assignment()?))
+            }
+            Some(Token::Symbol(sym)) if sym == "if" => {
+                _ = self.next_token()?;
+                let condition = self.parse_expr()?;
+                let true_block = self.parse_stmt()?;
+                let false_block = match self.peek_token() {
+                    Some(Token::Symbol(sym)) if sym == "else" => {
+                        _ = self.next_token()?;
+                        Some(self.parse_stmt()?)
+                    }
+                    _ => None,
+                };
+                Ok(Statement::If(Box::new((
+                    condition,
+                    true_block,
+                    false_block,
+                ))))
             }
             Some(Token::Operand('{')) => Ok(Statement::Block(self.parse_block()?)),
             None => Err(Error::UnexpectedEof),
@@ -420,6 +454,10 @@ impl fmt::Debug for Statement {
                     write!(f, " {x:?}")?;
                 }
                 write!(f, " }}")
+            }
+            Statement::If(inn) => {
+                let (cond, true_block, false_block) = inn.as_ref();
+                write!(f, "if ({cond:?}) {true_block:?} else {false_block:?}")
             }
         }
     }

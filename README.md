@@ -103,7 +103,36 @@ A stable pointer means it will always point to that object and will only be inva
 
 # Notes
 
-## Numbers grow at the start. Structs grow at the end.
+## Arrays
+
+Array initialization uses `u64`:
+```
+#     using u64 to create an array
+#                 vvv
+def []i32 arr = [3u64]i32;
+```
+Array indexing uses `u16`:
+```
+#        using u16 to index into an array
+#                      vvv
+def &i32 arr = (&arr)[0u16];
+```
+
+You can't index arrays directly:
+```
+def i32 arr = arr[0u16];
+```
+The above code gives the error:
+```
+array[_] access is only applicable to array references, use `&arr`
+```
+
+Instead you have to reference and dereference it:
+```
+def i32 arr = *(&arr)[0u16];
+```
+
+## Most things grow at the start. Structs grow at the end
 ```
 def i32 x = 0;
 ```

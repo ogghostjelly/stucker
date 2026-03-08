@@ -1,5 +1,10 @@
 i32 main() {
-    def []u64 map = [3u64]u64;
-    return 0;
+    def i32 x = 0;
+    if (1 & 0) {
+        set x = 1;
+    } else {
+        set x = 2;
+    }
+    return x;
 }
 

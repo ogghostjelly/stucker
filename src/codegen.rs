@@ -250,6 +250,46 @@ impl<W: io::Write> Codegen<W> {
                 }
                 Ok(())
             }
+            Statement::If(inn) => {
+                let (cond, true_block, false_block) = *inn;
+
+                let (cond_type, cond_idx) = FunctionCodegen::new(&mut self.nasm, var, &self.def)
+                    .codegen_expression(cond)?;
+
+                self.nasm.idx2addr("rbx", &cond_idx)?;
+
+                match cond_type.into_number()? {
+                    NumberType::I8 => write_asm!(self.nasm, "cmp byte [rbx+8], 0")?,
+                    NumberType::I16 => write_asm!(self.nasm, "cmp word [rbx+8], 0")?,
+                    NumberType::I32 => write_asm!(self.nasm, "cmp dword [rbx+8], 0")?,
+                    NumberType::I64 => write_asm!(self.nasm, "cmp qword [rbx+8], 0")?,
+                    NumberType::U8 => write_asm!(self.nasm, "cmp byte [rbx+8], 0")?,
+                    NumberType::U16 => write_asm!(self.nasm, "cmp word [rbx+8], 0")?,
+                    NumberType::U32 => write_asm!(self.nasm, "cmp dword [rbx+8], 0")?,
+                    NumberType::U64 => write_asm!(self.nasm, "cmp qword [rbx+8], 0")?,
+                    ty @ NumberType::F32 | ty @ NumberType::F64 => {
+                        return Err(Error::ExpectedInteger(ExpressionType::Number(ty)));
+                    }
+                }
+
+                let ret = self.nasm.get_local_label_name("if_return");
+                let false_label = self.nasm.get_local_label_name("if_false");
+
+                write_asm!(self.nasm, "je {false_label}")?;
+                let ptr = self.nasm.stack_pointer;
+                self.codegen_stmt(return_type, var, true_block)?;
+                self.nasm.pop_until(ptr)?;
+                write_asm!(self.nasm, "jmp {ret}")?;
+                self.nasm.raw_label(&false_label)?;
+                if let Some(false_block) = false_block {
+                    let ptr = self.nasm.stack_pointer;
+                    self.codegen_stmt(return_type, var, false_block)?;
+                    self.nasm.pop_until(ptr)?;
+                }
+                self.nasm.raw_label(&ret)?;
+
+                Ok(())
+            }
         }
     }
 
@@ -547,19 +587,44 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
 
     pub fn codegen_binop(
         &mut self,
-        (lhs, op, rhs): (Expression, char, Expression),
+        (lhs, op, rhs): (Expression, String, Expression),
     ) -> Result<(ExpressionType, Index)> {
         let (lhs_type, lhs) = self.codegen_expression(lhs)?;
         let (rhs_type, rhs) = self.codegen_expression(rhs)?;
+        let (lhs_type, rhs_type) = (lhs_type.into_number()?, rhs_type.into_number()?);
 
-        if lhs_type != rhs_type {
-            return Err(Error::TypeMismatch(lhs_type, rhs_type));
-        }
-        let (lhs_type, _) = (lhs_type.into_number()?, rhs_type.into_number()?);
+        let ret = match op.as_str() {
+            "+" => self
+                .nasm
+                .sum("add", "addss", "addsd", lhs_type, rhs_type, &lhs, &rhs),
+            "-" => self
+                .nasm
+                .sum("sub", "subss", "subsd", lhs_type, rhs_type, &lhs, &rhs),
+            "*" => self
+                .nasm
+                .prod("mul", "imul", lhs_type, rhs_type, &lhs, &rhs, false),
+            "/" => self
+                .nasm
+                .prod("div", "idiv", lhs_type, rhs_type, &lhs, &rhs, false),
+            "%" => self
+                .nasm
+                .prod("div", "idiv", lhs_type, rhs_type, &lhs, &rhs, true),
 
-        let ret = match op {
-            '+' => self.nasm.add(lhs_type, &lhs, &rhs),
-            '-' => self.nasm.sub(lhs_type, &lhs, &rhs),
+            "&" => self.nasm.bitwise("and", lhs_type, rhs_type, &lhs, &rhs),
+            "|" => self.nasm.bitwise("or", lhs_type, rhs_type, &lhs, &rhs),
+            "^" => self.nasm.bitwise("xor", lhs_type, rhs_type, &lhs, &rhs),
+            "<<" => self.nasm.bitshift("shl", lhs_type, rhs_type, &lhs, &rhs),
+            ">>" => self.nasm.bitshift("shr", lhs_type, rhs_type, &lhs, &rhs),
+
+            "&&" => todo!("&&"),
+            "||" => todo!("||"),
+
+            ">" => todo!(">"),
+            ">=" => todo!(">="),
+            "<" => todo!("<"),
+            "<=" => todo!("<="),
+            "==" => todo!("=="),
+
             _ => return Err(Error::InvalidOperator(op)),
         }?;
 
@@ -712,34 +777,166 @@ impl<W: io::Write> Nasm<W> {
 }*/
 
 impl<W: io::Write> Nasm<W> {
-    pub fn add(&mut self, numtype: NumberType, lhs: &Index, rhs: &Index) -> Result<Index> {
-        match numtype {
-            NumberType::I8 => self.op("add", RegisterSize::S8, lhs, rhs),
-            NumberType::I16 => self.op("add", RegisterSize::S16, lhs, rhs),
-            NumberType::I32 => self.op("add", RegisterSize::S32, lhs, rhs),
-            NumberType::I64 => self.op("add", RegisterSize::S64, lhs, rhs),
-            NumberType::U8 => self.op("add", RegisterSize::S8, lhs, rhs),
-            NumberType::U16 => self.op("add", RegisterSize::S16, lhs, rhs),
-            NumberType::U32 => self.op("add", RegisterSize::S32, lhs, rhs),
-            NumberType::U64 => self.op("add", RegisterSize::S64, lhs, rhs),
-            NumberType::F32 => self.op("addss", RegisterSize::S32, lhs, rhs),
-            NumberType::F64 => self.op("addsd", RegisterSize::S64, lhs, rhs),
+    pub fn sum(
+        &mut self,
+        op: &'static str,
+        opss: &'static str,
+        opsd: &'static str,
+        lhs_type: NumberType,
+        rhs_type: NumberType,
+        lhs: &Index,
+        rhs: &Index,
+    ) -> Result<Index> {
+        if lhs_type != rhs_type {
+            return Err(Error::TypeMismatch(
+                ExpressionType::Number(lhs_type),
+                ExpressionType::Number(rhs_type),
+            ));
+        }
+
+        match lhs_type {
+            NumberType::I8 => self.op(op, RegisterSize::S8, lhs, rhs),
+            NumberType::I16 => self.op(op, RegisterSize::S16, lhs, rhs),
+            NumberType::I32 => self.op(op, RegisterSize::S32, lhs, rhs),
+            NumberType::I64 => self.op(op, RegisterSize::S64, lhs, rhs),
+            NumberType::U8 => self.op(op, RegisterSize::S8, lhs, rhs),
+            NumberType::U16 => self.op(op, RegisterSize::S16, lhs, rhs),
+            NumberType::U32 => self.op(op, RegisterSize::S32, lhs, rhs),
+            NumberType::U64 => self.op(op, RegisterSize::S64, lhs, rhs),
+            NumberType::F32 => self.op(opss, RegisterSize::S32, lhs, rhs),
+            NumberType::F64 => self.op(opsd, RegisterSize::S64, lhs, rhs),
         }
     }
 
-    pub fn sub(&mut self, numtype: NumberType, lhs: &Index, rhs: &Index) -> Result<Index> {
-        match numtype {
-            NumberType::I8 => self.op("sub", RegisterSize::S8, lhs, rhs),
-            NumberType::I16 => self.op("sub", RegisterSize::S16, lhs, rhs),
-            NumberType::I32 => self.op("sub", RegisterSize::S32, lhs, rhs),
-            NumberType::I64 => self.op("sub", RegisterSize::S64, lhs, rhs),
-            NumberType::U8 => self.op("sub", RegisterSize::S8, lhs, rhs),
-            NumberType::U16 => self.op("sub", RegisterSize::S16, lhs, rhs),
-            NumberType::U32 => self.op("sub", RegisterSize::S32, lhs, rhs),
-            NumberType::U64 => self.op("sub", RegisterSize::S64, lhs, rhs),
-            NumberType::F32 => self.op("subss", RegisterSize::S32, lhs, rhs),
-            NumberType::F64 => self.op("subsd", RegisterSize::S64, lhs, rhs),
+    pub fn prod(
+        &mut self,
+        op: &'static str,
+        iop: &'static str,
+        lhs_type: NumberType,
+        rhs_type: NumberType,
+        lhs: &Index,
+        rhs: &Index,
+        use_regd: bool,
+    ) -> Result<Index> {
+        if lhs_type != rhs_type {
+            return Err(Error::TypeMismatch(
+                ExpressionType::Number(lhs_type),
+                ExpressionType::Number(rhs_type),
+            ));
         }
+
+        match lhs_type {
+            NumberType::I8 => self.op_implied_reg(iop, RegisterSize::S8, lhs, rhs, use_regd),
+            NumberType::I16 => self.op_implied_reg(iop, RegisterSize::S16, lhs, rhs, use_regd),
+            NumberType::I32 => self.op_implied_reg(iop, RegisterSize::S32, lhs, rhs, use_regd),
+            NumberType::I64 => self.op_implied_reg(iop, RegisterSize::S64, lhs, rhs, use_regd),
+            NumberType::U8 => self.op_implied_reg(op, RegisterSize::S8, lhs, rhs, use_regd),
+            NumberType::U16 => self.op_implied_reg(op, RegisterSize::S16, lhs, rhs, use_regd),
+            NumberType::U32 => self.op_implied_reg(op, RegisterSize::S32, lhs, rhs, use_regd),
+            NumberType::U64 => self.op_implied_reg(op, RegisterSize::S64, lhs, rhs, use_regd),
+            NumberType::F32 => todo!("float math"),
+            NumberType::F64 => todo!("float math"),
+        }
+    }
+
+    pub fn bitwise(
+        &mut self,
+        op: &'static str,
+        lhs_type: NumberType,
+        rhs_type: NumberType,
+        lhs: &Index,
+        rhs: &Index,
+    ) -> Result<Index> {
+        if lhs_type != rhs_type {
+            return Err(Error::TypeMismatch(
+                ExpressionType::Number(lhs_type),
+                ExpressionType::Number(rhs_type),
+            ));
+        }
+
+        match lhs_type {
+            NumberType::I8 => self.op(op, RegisterSize::S8, lhs, rhs),
+            NumberType::I16 => self.op(op, RegisterSize::S16, lhs, rhs),
+            NumberType::I32 => self.op(op, RegisterSize::S32, lhs, rhs),
+            NumberType::I64 => self.op(op, RegisterSize::S64, lhs, rhs),
+            NumberType::U8 => self.op(op, RegisterSize::S8, lhs, rhs),
+            NumberType::U16 => self.op(op, RegisterSize::S16, lhs, rhs),
+            NumberType::U32 => self.op(op, RegisterSize::S32, lhs, rhs),
+            NumberType::U64 => self.op(op, RegisterSize::S64, lhs, rhs),
+            NumberType::F32 | NumberType::F64 => Err(Error::BitwiseFloat),
+        }
+    }
+
+    pub fn bitshift(
+        &mut self,
+        op: &'static str,
+        lhs_type: NumberType,
+        rhs_type: NumberType,
+        lhs: &Index,
+        rhs: &Index,
+    ) -> Result<Index> {
+        if rhs_type != NumberType::U16 {
+            return Err(Error::BitShiftU16);
+        }
+
+        match lhs_type {
+            NumberType::I8 => self.op_bitshift(op, RegisterSize::S8, lhs, rhs),
+            NumberType::I16 => self.op_bitshift(op, RegisterSize::S16, lhs, rhs),
+            NumberType::I32 => self.op_bitshift(op, RegisterSize::S32, lhs, rhs),
+            NumberType::I64 => self.op_bitshift(op, RegisterSize::S64, lhs, rhs),
+            NumberType::U8 => self.op_bitshift(op, RegisterSize::S8, lhs, rhs),
+            NumberType::U16 => self.op_bitshift(op, RegisterSize::S16, lhs, rhs),
+            NumberType::U32 => self.op_bitshift(op, RegisterSize::S32, lhs, rhs),
+            NumberType::U64 => self.op_bitshift(op, RegisterSize::S64, lhs, rhs),
+            NumberType::F32 | NumberType::F64 => Err(Error::BitwiseFloat),
+        }
+    }
+
+    pub fn op_implied_reg(
+        &mut self,
+        operation: &'static str,
+        size: RegisterSize,
+        lhs: &Index,
+        rhs: &Index,
+        use_regd: bool,
+    ) -> Result<Index> {
+        assert!(operation.chars().all(|c| char::is_ascii_alphabetic(&c)));
+
+        let rega = size.a();
+        let regc = size.c();
+        let regd = size.d();
+
+        self.idx2addr("rbx", rhs)?;
+        write_asm!(self, "mov {regc}, [rbx+8] ; {operation}_{size:?}")?;
+        self.idx2addr("rbx", lhs)?;
+        write_asm!(self, "mov {rega}, [rbx+8] ; {operation}_{size:?}")?;
+
+        write_asm!(self, "{operation} {regc} ; {operation}_{size:?}")?;
+        let idx = self.push_register(if use_regd { regd } else { rega }, size)?;
+
+        Ok(idx)
+    }
+
+    pub fn op_bitshift(
+        &mut self,
+        operation: &'static str,
+        size: RegisterSize,
+        lhs: &Index,
+        rhs: &Index,
+    ) -> Result<Index> {
+        assert!(operation.chars().all(|c| char::is_ascii_alphabetic(&c)));
+
+        let regb = size.b();
+
+        self.idx2addr("rbx", rhs)?;
+        write_asm!(self, "mov cl, [rbx+8] ; {operation}_{size:?}")?;
+        self.idx2addr("rbx", lhs)?;
+        write_asm!(self, "mov {regb}, [rbx+8] ; {operation}_{size:?}")?;
+
+        write_asm!(self, "{operation} {regb}, cl ; {operation}_{size:?}")?;
+        let idx = self.push_register(regb, size)?;
+
+        Ok(idx)
     }
 
     pub fn op(
@@ -775,6 +972,15 @@ pub enum RegisterSize {
 }
 
 impl RegisterSize {
+    pub fn a(&self) -> &'static str {
+        match self {
+            RegisterSize::S64 => "rax",
+            RegisterSize::S32 => "eax",
+            RegisterSize::S16 => "ax",
+            RegisterSize::S8 => "al",
+        }
+    }
+
     pub fn b(&self) -> &'static str {
         match self {
             RegisterSize::S64 => "rbx",
@@ -790,6 +996,15 @@ impl RegisterSize {
             RegisterSize::S32 => "ecx",
             RegisterSize::S16 => "cx",
             RegisterSize::S8 => "cl",
+        }
+    }
+
+    pub fn d(&self) -> &'static str {
+        match self {
+            RegisterSize::S64 => "rdx",
+            RegisterSize::S32 => "edx",
+            RegisterSize::S16 => "dx",
+            RegisterSize::S8 => "dl",
         }
     }
 
@@ -1166,6 +1381,14 @@ impl<W: io::Write> Nasm<W> {
         Ok(())
     }
 
+    /// Keep popping until the stack pointer is restored to a certain point.
+    pub fn pop_until(&mut self, ptr: u16) -> Result<()> {
+        for _ in ptr..self.stack_pointer {
+            self.pop()?;
+        }
+        Ok(())
+    }
+
     /// Return from the function.
     pub fn ret(&mut self, return_type: &ExpressionType) -> Result<()> {
         // If the return type is not void, the first two items in the stack are the return value and the return address.
@@ -1335,10 +1558,12 @@ pub enum Error {
     TypeMismatch(ExpressionType, ExpressionType),
     #[error("type mismatch: expected any number but got {0}")]
     ExpectedNumber(ExpressionType),
+    #[error("type mismatch: expected any integer but got {0}")]
+    ExpectedInteger(ExpressionType),
     #[error("type mismatch: expected any reference but got {0}")]
     ExpectedRef(ExpressionType),
     #[error("invalid operator: {0}")]
-    InvalidOperator(char),
+    InvalidOperator(String),
     #[error("unknown symbol: {0}")]
     UnknownSymbol(String),
     #[error("unknown function: {0}")]
@@ -1359,4 +1584,8 @@ pub enum Error {
     CannotAllocVoid,
     #[error("type mismatch: void (invalid index)")]
     InvalidIndex,
+    #[error("cannot use bitwise operators on floats")]
+    BitwiseFloat,
+    #[error("can only bit-shift by a u16")]
+    BitShiftU16,
 }
