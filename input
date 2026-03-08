@@ -1,5 +1,5 @@
 i32 main() {
-    def []i32 arr = [3]i32;
-    set *(&arr)[2u16] = 10;
-    return *(&arr)[0u16];
+    def []u64 map = [3u64]u64;
+    return 0;
 }
+

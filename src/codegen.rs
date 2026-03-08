@@ -414,15 +414,33 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                 Ok((ref_value_ty, expr_idx))
             }
             Expression::InitArray(inn) => {
-                let (len, ty) = *inn;
+                let (len, elem_ty) = *inn;
 
-                let mut size = 0;
-                for _ in 0..len {
-                    size += self.def.alloc_hidden(self.nasm, &ty)?;
+                let (index_ty, index_idx) = self.codegen_expression(len)?;
+                let expected_ty = ExpressionType::Number(NumberType::U64);
+                if expected_ty != index_ty {
+                    return Err(Error::TypeMismatch(expected_ty, index_ty));
                 }
-                let arr_idx = self.nasm.push_size_tag(size)?;
 
-                Ok((ExpressionType::Array(Box::new(ty)), arr_idx))
+                self.nasm.idx2addr("rcx", &index_idx)?;
+                write_asm!(self.nasm, "mov rcx, [rcx+8]")?;
+                write_asm!(self.nasm, "mov rdx, 8")?;
+
+                let ret = self.nasm.get_local_label_name("init_array_return");
+
+                let body = self.nasm.local_label("init_array_body")?;
+                write_asm!(self.nasm, "cmp rcx, 0")?;
+                write_asm!(self.nasm, "je {ret}")?;
+                let size = self.def.alloc_hidden(self.nasm, &elem_ty)?;
+                write_asm!(self.nasm, "add rdx, {size}")?;
+                write_asm!(self.nasm, "sub rcx, 1")?;
+                write_asm!(self.nasm, "jmp {body}")?;
+
+                self.nasm.raw_label(&ret)?;
+
+                let idx = self.nasm.push_size_tag("rdx")?;
+
+                Ok((ExpressionType::Array(Box::new(elem_ty)), idx))
             }
             Expression::As(inn) => {
                 let (ty, inn) = *inn;
@@ -820,16 +838,15 @@ impl<W: io::Write> Nasm<W> {
         Ok(Index::new(idx))
     }
 
-    /// Manually push a size tag onto the stack.
-    /// The `size` parameter is the size of the data excluding the 8-byte size tag.
-    /// `push_size_tag(0)` will store a size tag with a value of `8`.
-    pub fn push_size_tag(&mut self, size: u16) -> Result<Index> {
+    /// Manually push a size tag stored in a register onto the stack.
+    /// The `size` parameter is the size of the data including the 8-byte size tag.
+    /// `push_size_tag(8)` will store data with a size of `0` because the size tag takes 8-bytes.
+    pub fn push_size_tag(&mut self, reg: &str) -> Result<Index> {
         let idx = self.stack_pointer;
         self.inc_stack()?;
 
-        let size = size + 8;
         write_asm!(self, "sub rsp, 8 ; push")?;
-        write_asm!(self, "mov qword [rsp], {size} ; push")?;
+        write_asm!(self, "mov qword [rsp], {reg} ; push")?;
 
         Ok(Index::new(idx))
     }

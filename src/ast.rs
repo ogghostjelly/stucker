@@ -95,7 +95,7 @@ pub enum Expression {
     Ref(Box<Expression>),
     Deref(Box<Expression>),
     As(Box<(ExpressionType, Expression)>),
-    InitArray(Box<(u64, ExpressionType)>),
+    InitArray(Box<(Expression, ExpressionType)>),
     FieldAccess(Box<(Expression, String)>),
     ArrayAccess(Box<(Expression, Expression)>),
 }
@@ -148,6 +148,7 @@ pub struct Function {
     pub body: Vec<Statement>,
 }
 
+// NOTE: cannot use a HashMap because struct fields are ordered.
 pub struct Struct(pub Vec<(ExpressionType, String)>);
 
 pub enum Statement {

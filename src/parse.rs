@@ -1,4 +1,4 @@
-use std::{fmt, io, mem};
+use std::{collections::HashSet, fmt, io, mem};
 
 use crate::{
     ast::{
@@ -61,7 +61,15 @@ impl<R: io::Read> Parser<R> {
         }
 
         let name = self.next_symbol()?;
+
         let body = self.parse_type_array('{', '}')?;
+        let mut keys = HashSet::new();
+
+        for (_, field) in &body {
+            if !keys.insert(field) {
+                return Err(Error::DuplicateField(field.clone()));
+            }
+        }
 
         Ok((name, Struct(body)))
     }
@@ -136,17 +144,7 @@ impl<R: io::Read> Parser<R> {
             }
             Some(Token::Operand('[')) => {
                 _ = self.next_token()?;
-                let len = match self.parse_number()? {
-                    Expression::Number(Number::I8(x)) if x.is_positive() => x as u64,
-                    Expression::Number(Number::I16(x)) if x.is_positive() => x as u64,
-                    Expression::Number(Number::I32(x)) if x.is_positive() => x as u64,
-                    Expression::Number(Number::I64(x)) if x.is_positive() => x as u64,
-                    Expression::Number(Number::U8(x)) => x as u64,
-                    Expression::Number(Number::U16(x)) => x as u64,
-                    Expression::Number(Number::U32(x)) => x as u64,
-                    Expression::Number(Number::U64(x)) => x,
-                    _ => return Err(Error::InvalidArrayIndex),
-                };
+                let len = self.parse_expr()?;
                 self.expect_operand(']')?;
                 Ok(Expression::InitArray(Box::new((len, self.parse_type()?))))
             }
@@ -389,8 +387,8 @@ pub enum Error {
     UnknownToken,
     #[error("expected number")]
     ExpectedNumber,
-    #[error("only unsigned integers are allowed in array index")]
-    InvalidArrayIndex,
+    #[error("duplicate field '{0}'")]
+    DuplicateField(String),
 }
 
 impl fmt::Debug for GlobalValue {
