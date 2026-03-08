@@ -309,7 +309,7 @@ impl<W: io::Write> Codegen<W> {
 
                 self.codegen_stmt(return_type, var, init)?;
 
-                let ret = self.nasm.get_global_label_name("for_return");
+                let ret = self.nasm.get_local_label_name("for_return");
 
                 let body_label = self.nasm.local_label("for_body")?;
                 self.codegen_cmp(var, cond)?;
@@ -334,26 +334,16 @@ impl<W: io::Write> Codegen<W> {
 
     pub fn codegen_cmp(&mut self, var: &mut VarTable, cond: Expression) -> Result<()> {
         let ptr = self.nasm.stack_pointer;
-
-        let (cond_type, cond_idx) =
+        let (expr_ty, expr_idx) =
             FunctionCodegen::new(&mut self.nasm, var, &self.def).codegen_expression(cond)?;
-
-        self.nasm.idx2addr("rbx", &cond_idx)?;
-
-        match cond_type.into_number()? {
-            NumberType::I8 => write_asm!(self.nasm, "mov b, byte [rbx+8]")?,
-            NumberType::I16 => write_asm!(self.nasm, "mov bx, word [rbx+8]")?,
-            NumberType::I32 => write_asm!(self.nasm, "mov ebx, dword [rbx+8]")?,
-            NumberType::I64 => write_asm!(self.nasm, "mov rbx, qword [rbx+8]")?,
-            NumberType::U8 => write_asm!(self.nasm, "mov b, byte [rbx+8]")?,
-            NumberType::U16 => write_asm!(self.nasm, "mov bx, word [rbx+8]")?,
-            NumberType::U32 => write_asm!(self.nasm, "mov ebx, dword [rbx+8]")?,
-            NumberType::U64 => write_asm!(self.nasm, "mov rbx, qword [rbx+8]")?,
-            ty @ NumberType::F32 | ty @ NumberType::F64 => {
-                return Err(Error::ExpectedInteger(ExpressionType::Number(ty)));
-            }
-        }
-
+        FunctionCodegen::new(&mut self.nasm, var, &self.def).mov_num(
+            (expr_ty.into_number()?, expr_idx),
+            "bl",
+            "bx",
+            "ebx",
+            "rbx",
+            "rcx",
+        )?;
         self.nasm.pop_until(ptr)?;
 
         write_asm!(self.nasm, "cmp rbx, 0")?;
@@ -742,6 +732,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         let (lhs_type, lhs) = self.codegen_expression(lhs)?;
         let (rhs_type, rhs) = self.codegen_expression(rhs)?;
         let (lhs_type, rhs_type) = (lhs_type.into_number()?, rhs_type.into_number()?);
+        let mut ret_type = None;
 
         let ret = match op.as_str() {
             "+" => self
@@ -766,19 +757,72 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             "<<" => self.nasm.bitshift("shl", lhs_type, rhs_type, &lhs, &rhs),
             ">>" => self.nasm.bitshift("shr", lhs_type, rhs_type, &lhs, &rhs),
 
-            "&&" => todo!("&&"),
-            "||" => todo!("||"),
+            "&&" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_and_or((lhs_type, lhs), (rhs_type, rhs), "and")
+            }
+            "||" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_and_or((lhs_type, lhs), (rhs_type, rhs), "or")
+            }
 
-            ">" => todo!(">"),
-            ">=" => todo!(">="),
-            "<" => todo!("<"),
-            "<=" => todo!("<="),
-            "==" => todo!("=="),
+            ">" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "g")
+            }
+            ">=" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "ge")
+            }
+            "<" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "l")
+            }
+            "<=" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "le")
+            }
+            "==" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "e")
+            }
 
             _ => return Err(Error::InvalidOperator(op)),
         }?;
 
-        Ok((ExpressionType::Number(lhs_type), ret))
+        Ok((ExpressionType::Number(ret_type.unwrap_or(lhs_type)), ret))
+    }
+
+    pub fn codegen_ord(
+        &mut self,
+        (lhs_type, lhs): (NumberType, Index),
+        (rhs_type, rhs): (NumberType, Index),
+        operation: &str,
+    ) -> Result<Index> {
+        self.mov_num((lhs_type, lhs), "bl", "bx", "ebx", "rbx", "rcx")?;
+        self.mov_num((rhs_type, rhs), "cl", "cx", "ecx", "rcx", "rdx")?;
+        write_asm!(self.nasm, "cmp rbx, rcx")?;
+        write_asm!(self.nasm, "set{operation} bl")?;
+        self.nasm.push_register("bl", RegisterSize::S8)
+    }
+
+    pub fn codegen_and_or(
+        &mut self,
+        (lhs_type, lhs): (NumberType, Index),
+        (rhs_type, rhs): (NumberType, Index),
+        operation: &str,
+    ) -> Result<Index> {
+        self.mov_num((lhs_type, lhs), "bl", "bx", "ebx", "rbx", "rcx")?;
+        write_asm!(self.nasm, "cmp rbx, 0")?;
+        write_asm!(self.nasm, "setne bl")?;
+
+        self.mov_num((rhs_type, rhs), "cl", "cx", "ecx", "rcx", "rdx")?;
+        write_asm!(self.nasm, "cmp rcx, 0")?;
+        write_asm!(self.nasm, "setne cl")?;
+
+        write_asm!(self.nasm, "{operation} bl, cl")?;
+
+        self.nasm.push_register("bl", RegisterSize::S8)
     }
 
     pub fn codegen_number(&mut self, number: Number) -> Result<(ExpressionType, Index)> {
@@ -823,6 +867,36 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         }?;
 
         Ok((ExpressionType::Number(numtype), idx))
+    }
+
+    /// move a number into a register
+    pub fn mov_num(
+        &mut self,
+        (cond_type, cond_idx): (NumberType, Index),
+        reg8: &str,
+        reg16: &str,
+        reg32: &str,
+        reg64: &str,
+        sreg64: &str,
+    ) -> Result<()> {
+        write_asm!(self.nasm, "xor {reg64}, {reg64}")?;
+        self.nasm.idx2addr(sreg64, &cond_idx)?;
+
+        match cond_type {
+            NumberType::I8 => write_asm!(self.nasm, "mov {reg8}, byte [{sreg64}+8]")?,
+            NumberType::I16 => write_asm!(self.nasm, "mov {reg16}, word [{sreg64}+8]")?,
+            NumberType::I32 => write_asm!(self.nasm, "mov {reg32}, dword [{sreg64}+8]")?,
+            NumberType::I64 => write_asm!(self.nasm, "mov {reg64}, qword [{sreg64}+8]")?,
+            NumberType::U8 => write_asm!(self.nasm, "mov {reg8}, byte [{sreg64}+8]")?,
+            NumberType::U16 => write_asm!(self.nasm, "mov {reg16}, word [{sreg64}+8]")?,
+            NumberType::U32 => write_asm!(self.nasm, "mov {reg32}, dword [{sreg64}+8]")?,
+            NumberType::U64 => write_asm!(self.nasm, "mov {reg64}, qword [{sreg64}+8]")?,
+            ty @ NumberType::F32 | ty @ NumberType::F64 => {
+                return Err(Error::ExpectedInteger(ExpressionType::Number(ty)));
+            }
+        }
+
+        Ok(())
     }
 }
 
