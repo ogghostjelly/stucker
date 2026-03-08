@@ -2,8 +2,8 @@ use std::{collections::HashSet, fmt, io, mem};
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
-        SetAssignment, Statement, Struct,
+        DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue, Number,
+        NumberType, SetAssignment, Statement, Struct,
     },
     tokenize::{self, Token, Tokenizer},
 };
@@ -253,6 +253,29 @@ impl<R: io::Read> Parser<R> {
                     false_block,
                 ))))
             }
+            Some(Token::Symbol(sym)) if sym == "while" => {
+                _ = self.next_token()?;
+                let condition = self.parse_expr()?;
+                let body = self.parse_stmt()?;
+                Ok(Statement::While(Box::new((condition, body))))
+            }
+            Some(Token::Symbol(sym)) if sym == "for" => {
+                _ = self.next_token()?;
+                self.expect_operand('(')?;
+                let init = self.parse_stmt()?;
+                self.expect_operand(';')?;
+                let cond = self.parse_expr()?;
+                self.expect_operand(';')?;
+                let inc = self.parse_stmt()?;
+                self.expect_operand(')')?;
+                let body = self.parse_stmt()?;
+                Ok(Statement::For(Box::new(ForStatement {
+                    init,
+                    cond,
+                    inc,
+                    body,
+                })))
+            }
             Some(Token::Operand('{')) => Ok(Statement::Block(self.parse_block()?)),
             None => Err(Error::UnexpectedEof),
             _ => Ok(Statement::Expr(self.parse_expr()?)),
@@ -458,6 +481,19 @@ impl fmt::Debug for Statement {
             Statement::If(inn) => {
                 let (cond, true_block, false_block) = inn.as_ref();
                 write!(f, "if ({cond:?}) {true_block:?} else {false_block:?}")
+            }
+            Statement::While(inn) => {
+                let (cond, body) = inn.as_ref();
+                write!(f, "while ({cond:?}) {body:?}")
+            }
+            Statement::For(inn) => {
+                let ForStatement {
+                    init,
+                    cond,
+                    inc,
+                    body,
+                } = inn.as_ref();
+                write!(f, "for ({init:?}; {cond:?}; {inc:?}) {body:?}")
             }
         }
     }

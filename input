@@ -1,12 +1,8 @@
-struct Vec2 {
-    i32 x,
-    i32 y,
-}
-
 i32 main() {
-    def Vec2 pos;
-    set pos.x = 1;
-    set pos.y = 2;
-    return pos.x;
+    def i32 x = 0;
+    for (def i32 i = 0; 5 - i; set i = i + 1) {
+        set x = x + i;
+    }
+    return x;
 }
 

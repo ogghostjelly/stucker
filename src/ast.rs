@@ -158,6 +158,15 @@ pub enum Statement {
     Expr(Expression),
     Block(Vec<Statement>),
     If(Box<(Expression, Statement, Option<Statement>)>),
+    While(Box<(Expression, Statement)>),
+    For(Box<ForStatement>),
+}
+
+pub struct ForStatement {
+    pub init: Statement,
+    pub cond: Expression,
+    pub inc: Statement,
+    pub body: Statement,
 }
 
 pub struct DefAssignment {

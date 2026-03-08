@@ -5,8 +5,8 @@ use std::{
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, Function, GlobalValue, Number, NumberType,
-        SetAssignment, Statement,
+        DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue, Number,
+        NumberType, SetAssignment, Statement,
     },
     write_asm,
 };
@@ -245,52 +245,120 @@ impl<W: io::Write> Codegen<W> {
             }
             Statement::Block(statements) => {
                 let mut table = VarTable::new(Some(var.clone()));
+                let ptr = self.nasm.stack_pointer;
                 for stmt in statements {
                     self.codegen_stmt(return_type, &mut table, stmt)?;
                 }
+                self.nasm.pop_until(ptr)?;
                 Ok(())
             }
             Statement::If(inn) => {
                 let (cond, true_block, false_block) = *inn;
 
-                let (cond_type, cond_idx) = FunctionCodegen::new(&mut self.nasm, var, &self.def)
-                    .codegen_expression(cond)?;
-
-                self.nasm.idx2addr("rbx", &cond_idx)?;
-
-                match cond_type.into_number()? {
-                    NumberType::I8 => write_asm!(self.nasm, "cmp byte [rbx+8], 0")?,
-                    NumberType::I16 => write_asm!(self.nasm, "cmp word [rbx+8], 0")?,
-                    NumberType::I32 => write_asm!(self.nasm, "cmp dword [rbx+8], 0")?,
-                    NumberType::I64 => write_asm!(self.nasm, "cmp qword [rbx+8], 0")?,
-                    NumberType::U8 => write_asm!(self.nasm, "cmp byte [rbx+8], 0")?,
-                    NumberType::U16 => write_asm!(self.nasm, "cmp word [rbx+8], 0")?,
-                    NumberType::U32 => write_asm!(self.nasm, "cmp dword [rbx+8], 0")?,
-                    NumberType::U64 => write_asm!(self.nasm, "cmp qword [rbx+8], 0")?,
-                    ty @ NumberType::F32 | ty @ NumberType::F64 => {
-                        return Err(Error::ExpectedInteger(ExpressionType::Number(ty)));
-                    }
-                }
+                self.codegen_cmp(var, cond)?;
 
                 let ret = self.nasm.get_local_label_name("if_return");
                 let false_label = self.nasm.get_local_label_name("if_false");
 
                 write_asm!(self.nasm, "je {false_label}")?;
+
+                let mut true_var = VarTable::new(Some(var.clone()));
                 let ptr = self.nasm.stack_pointer;
-                self.codegen_stmt(return_type, var, true_block)?;
+                self.codegen_stmt(return_type, &mut true_var, true_block)?;
                 self.nasm.pop_until(ptr)?;
                 write_asm!(self.nasm, "jmp {ret}")?;
+
                 self.nasm.raw_label(&false_label)?;
                 if let Some(false_block) = false_block {
+                    let mut false_var = VarTable::new(Some(var.clone()));
                     let ptr = self.nasm.stack_pointer;
-                    self.codegen_stmt(return_type, var, false_block)?;
+                    self.codegen_stmt(return_type, &mut false_var, false_block)?;
                     self.nasm.pop_until(ptr)?;
                 }
+
+                self.nasm.raw_label(&ret)?;
+
+                Ok(())
+            }
+            Statement::While(inn) => {
+                let (cond, body) = *inn;
+
+                let ret = self.nasm.get_local_label_name("while_return");
+
+                let body_label = self.nasm.local_label("while_body")?;
+                self.codegen_cmp(var, cond)?;
+                write_asm!(self.nasm, "je {ret}")?;
+
+                let mut body_var = VarTable::new(Some(var.clone()));
+                let ptr = self.nasm.stack_pointer;
+                self.codegen_stmt(return_type, &mut body_var, body)?;
+                self.nasm.pop_until(ptr)?;
+
+                write_asm!(self.nasm, "jmp {body_label}")?;
+                self.nasm.raw_label(&ret)?;
+
+                Ok(())
+            }
+            Statement::For(inn) => {
+                let ForStatement {
+                    init,
+                    cond,
+                    inc,
+                    body,
+                } = *inn;
+
+                self.codegen_stmt(return_type, var, init)?;
+
+                let ret = self.nasm.get_global_label_name("for_return");
+
+                let body_label = self.nasm.local_label("for_body")?;
+                self.codegen_cmp(var, cond)?;
+                write_asm!(self.nasm, "je {ret}")?;
+
+                {
+                    let ptr = self.nasm.stack_pointer;
+                    let mut body_var = VarTable::new(Some(var.clone()));
+                    self.codegen_stmt(return_type, &mut body_var, body)?;
+                    self.nasm.pop_until(ptr)?;
+                    self.codegen_stmt(return_type, var, inc)?;
+                    self.nasm.pop_until(ptr)?;
+                }
+
+                write_asm!(self.nasm, "jmp {body_label}")?;
                 self.nasm.raw_label(&ret)?;
 
                 Ok(())
             }
         }
+    }
+
+    pub fn codegen_cmp(&mut self, var: &mut VarTable, cond: Expression) -> Result<()> {
+        let ptr = self.nasm.stack_pointer;
+
+        let (cond_type, cond_idx) =
+            FunctionCodegen::new(&mut self.nasm, var, &self.def).codegen_expression(cond)?;
+
+        self.nasm.idx2addr("rbx", &cond_idx)?;
+
+        match cond_type.into_number()? {
+            NumberType::I8 => write_asm!(self.nasm, "mov b, byte [rbx+8]")?,
+            NumberType::I16 => write_asm!(self.nasm, "mov bx, word [rbx+8]")?,
+            NumberType::I32 => write_asm!(self.nasm, "mov ebx, dword [rbx+8]")?,
+            NumberType::I64 => write_asm!(self.nasm, "mov rbx, qword [rbx+8]")?,
+            NumberType::U8 => write_asm!(self.nasm, "mov b, byte [rbx+8]")?,
+            NumberType::U16 => write_asm!(self.nasm, "mov bx, word [rbx+8]")?,
+            NumberType::U32 => write_asm!(self.nasm, "mov ebx, dword [rbx+8]")?,
+            NumberType::U64 => write_asm!(self.nasm, "mov rbx, qword [rbx+8]")?,
+            ty @ NumberType::F32 | ty @ NumberType::F64 => {
+                return Err(Error::ExpectedInteger(ExpressionType::Number(ty)));
+            }
+        }
+
+        self.nasm.pop_until(ptr)?;
+
+        write_asm!(self.nasm, "cmp rbx, 0")?;
+
+        Ok(())
     }
 
     pub fn codegen_def_assignment(
