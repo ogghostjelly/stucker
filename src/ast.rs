@@ -160,6 +160,7 @@ pub enum Statement {
     If(Box<(Expression, Statement, Option<Statement>)>),
     While(Box<(Expression, Statement)>),
     For(Box<ForStatement>),
+    Breakpoint,
 }
 
 pub struct ForStatement {

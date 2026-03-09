@@ -29,6 +29,7 @@ HashMap insert(&HashMap map, i32 key, i32 value) {
 
     def u8 key_matches = *map.buckets[i].key == key;
     def u8 is_empty = *map.buckets[i].key == 2147483647 && *map.buckets[i].value == 2147483647;
+    
     if (key_matches || is_empty) {
         set *map.buckets[i].key = key;
         set *map.buckets[i].value = value;

@@ -335,6 +335,10 @@ impl<W: io::Write> Codegen<W> {
 
                 Ok(())
             }
+            Statement::Breakpoint => {
+                write_asm!(self.nasm, "int3")?;
+                Ok(())
+            }
         }
     }
 

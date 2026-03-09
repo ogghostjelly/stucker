@@ -10,7 +10,8 @@ A compiled programming language that implements it's own custom data-structure i
 ```
 i32 main() {
     # create a list with 3 items
-    def []i32 x = [3]i32;
+    def u64 size = 3;
+    def []i32 x = [size]i32;
 
     # put some numbers in the list
     # (numbers default to `i32` if not given a specific type)
@@ -18,14 +19,9 @@ i32 main() {
     set x[1u64] = 2;
     set x[2u64] = 3;
 
-    ; resize the list to 6 elements
-    ; an i32 is 4-bytes so we need to do `4*6`
-    resize(&x, 4 * 6);
-
-    ; put some more items in the list
-    set x[3u64] = 1;
-    set x[4u64] = 2;
-    set x[5u64] = 3;
+    # double capacity
+    set size = size * 2;
+    set x = [size]i32;
 
     # return an exit code
     return 0;
@@ -270,5 +266,15 @@ i32 main() {
     assert my_struct.third == 3;
 
     return my_struct.first;
+}
+```
+
+## INT3
+
+You can manually insert `int3` NASM intructions with the `breakpoint` keyword.
+```
+i32 main(){
+    breakpoint;
+    return 0;
 }
 ```

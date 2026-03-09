@@ -249,6 +249,13 @@ impl<R: io::Read> Parser<R> {
                 _ = self.next_token()?;
                 Ok(Statement::SetAssign(self.parse_set_assignment()?))
             }
+            Some(Token::Symbol(sym)) if sym == "breakpoint" => {
+                _ = self.next_token()?;
+                if let Some(Token::Operand(';')) = self.peek_token() {
+                    _ = self.next_token()?;
+                }
+                Ok(Statement::Breakpoint)
+            }
             Some(Token::Symbol(sym)) if sym == "if" => {
                 _ = self.next_token()?;
                 let condition = self.parse_expr()?;
@@ -508,6 +515,7 @@ impl fmt::Debug for Statement {
                 } = inn.as_ref();
                 write!(f, "for ({init:?}; {cond:?}; {inc:?}) {body:?}")
             }
+            Statement::Breakpoint => write!(f, "breakpoint;"),
         }
     }
 }
