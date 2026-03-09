@@ -1,10 +1,8 @@
 i32 main() {
-    def i32 x = 0;
-    if (0 == 1) {
-        set x = 1;
-    } else {
-        set x = 0;
+    def []i32 map = [4u64]i32;
+    for (def u16 i = 0u16; i < 4; set i = i + 1u16) {
+        set *(&map)[i] = 2147483647;
     }
-    return x;
+    return 0;
 }
 

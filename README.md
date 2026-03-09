@@ -118,23 +118,6 @@ Array indexing uses `u16`:
 def &i32 arr = (&arr)[0u16];
 ```
 
-## Array Copies
-This won't set the `0`th item of the array:
-```
-set arr[0u16] = 0;
-```
-Because `arr[0u16]` copies the value, so it assigns `0` to the copy.
-Instead you need to take a reference to it and dereference assign it:
-```
-set *(&arr)[0u16] = 0;
-```
-This is isn't true for structs:
-```
-# this WILL update my_struct
-set my_struct.x = 3;
-```
-It's only arrays that copy.
-
 ## Most things grow at the start. Structs grow at the end
 ```
 def i32 x = 0;

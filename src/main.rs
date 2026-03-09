@@ -3,6 +3,7 @@
 use std::{
     fs::File,
     io::{self, Cursor},
+    process::exit,
 };
 
 use codegen::Codegen;
@@ -19,7 +20,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match run(&mut rdr) {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("{e}")
+            eprintln!("{e}");
+            exit(1);
         }
     };
 
