@@ -35,11 +35,11 @@ impl<R: io::Read> Tokenizer<R> {
                 let next_ch = self.peek();
 
                 match (ch, next_ch) {
-                    (b'>' | b'<', Some(b'=')) => {
+                    (b'>' | b'<' | b'!' | b'=', Some(b'=')) => {
                         _ = self.pop()?;
                         Ok(Some(Token::Operand2(ch as char, '=')))
                     }
-                    (b'&' | b'|' | b'=' | b'<' | b'>', Some(next_ch)) if ch == next_ch => {
+                    (b'&' | b'|' | b'<' | b'>', Some(next_ch)) if ch == next_ch => {
                         _ = self.pop()?;
                         Ok(Some(Token::Operand2(ch as char, ch as char)))
                     }

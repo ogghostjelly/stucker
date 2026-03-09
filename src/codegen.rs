@@ -90,30 +90,36 @@ impl<W: io::Write> Codegen<W> {
                     }
                 }
 
-                self.codegen_prologue(&return_type, &name)?;
-
                 let mut def_params = vec![];
-                let mut var = VarTable::default();
 
-                for (param_type, param_name) in params {
-                    let idx = self.nasm.push_supress();
-                    var.data.insert(param_name, (param_type.clone(), idx));
-                    def_params.push(param_type)
+                for (param_type, _) in &params {
+                    def_params.push(param_type.clone())
                 }
 
                 self.def.fn_table.insert(
-                    name,
+                    name.clone(),
                     DefinedFunction {
                         return_type: return_type.clone(),
                         params: def_params,
                     },
                 );
 
-                for stmt in body {
-                    self.codegen_stmt(&return_type, &mut var, stmt)?;
-                }
+                if let Some(body) = body {
+                    self.codegen_prologue(&return_type, &name)?;
 
-                self.nasm.ret(&return_type)?;
+                    let mut var = VarTable::default();
+
+                    for (param_type, param_name) in params {
+                        let idx = self.nasm.push_supress();
+                        var.data.insert(param_name, (param_type.clone(), idx));
+                    }
+
+                    for stmt in body {
+                        self.codegen_stmt(&return_type, &mut var, stmt)?;
+                    }
+
+                    self.nasm.ret(&return_type)?;
+                }
 
                 Ok(())
             }
@@ -542,7 +548,43 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             }
             Expression::As(inn) => {
                 let (ty, inn) = *inn;
-                let (_, idx) = self.codegen_expression(inn)?;
+                let (expr_ty, idx) = self.codegen_expression(inn)?;
+                let idx = match (expr_ty, &ty) {
+                    (ExpressionType::Number(from), ExpressionType::Number(to)) => {
+                        self.mov_num((from, idx), "b", "bx", "ebx", "rbx", "rcx")?;
+
+                        let idx = match to {
+                            NumberType::I8 => self.nasm.push(1, "as_i8"),
+                            NumberType::I16 => self.nasm.push(2, "as_i16"),
+                            NumberType::I32 => self.nasm.push(4, "as_i32"),
+                            NumberType::I64 => self.nasm.push(8, "as_i64"),
+                            NumberType::U8 => self.nasm.push(1, "as_u8"),
+                            NumberType::U16 => self.nasm.push(2, "as_u16"),
+                            NumberType::U32 => self.nasm.push(4, "as_u32"),
+                            NumberType::U64 => self.nasm.push(8, "as_u64"),
+                            NumberType::F32 => self.nasm.push(4, "as_f32"),
+                            NumberType::F64 => self.nasm.push(8, "as_f64"),
+                        }?;
+
+                        match to {
+                            NumberType::U8 | NumberType::I8 => {
+                                write_asm!(self.nasm, "mov [rsp+8], b")
+                            }
+                            NumberType::U16 | NumberType::I16 => {
+                                write_asm!(self.nasm, "mov [rsp+8], bx")
+                            }
+                            NumberType::F32 | NumberType::U32 | NumberType::I32 => {
+                                write_asm!(self.nasm, "mov [rsp+8], ebx")
+                            }
+                            NumberType::F64 | NumberType::U64 | NumberType::I64 => {
+                                write_asm!(self.nasm, "mov [rsp+8], rbx")
+                            }
+                        }?;
+
+                        idx
+                    }
+                    _ => idx,
+                };
                 Ok((ty, idx))
             }
             Expression::FieldAccess(inn) => {
@@ -787,6 +829,10 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                 ret_type = Some(NumberType::U8);
                 self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "e")
             }
+            "!=" => {
+                ret_type = Some(NumberType::U8);
+                self.codegen_ord((lhs_type, lhs), (rhs_type, rhs), "ne")
+            }
 
             _ => return Err(Error::InvalidOperator(op)),
         }?;
@@ -800,7 +846,7 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         (rhs_type, rhs): (NumberType, Index),
         operation: &str,
     ) -> Result<Index> {
-        self.mov_num((lhs_type, lhs), "bl", "bx", "ebx", "rbx", "rcx")?;
+        self.mov_num((lhs_type, lhs), "bl", "bx", "ebx", "rbx", "rdx")?;
         self.mov_num((rhs_type, rhs), "cl", "cx", "ecx", "rcx", "rdx")?;
         write_asm!(self.nasm, "cmp rbx, rcx")?;
         write_asm!(self.nasm, "set{operation} bl")?;

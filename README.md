@@ -103,6 +103,82 @@ A stable pointer means it will always point to that object and will only be inva
 
 # Notes
 
+## Function Prototypes
+
+Define function prototypes:
+```
+void a();
+void b();
+```
+Then give them a body:
+```
+void a() {
+    b();
+}
+
+void b() {
+    a();
+}
+```
+
+## Looping
+There are currently no `continue` or `break` statements.
+
+Sum of `0..9`:
+```
+def i32 count = 0;
+for (def i32 i = 0; i < 10; set i = i + 1) {
+    set count = count + i;
+}
+return count;
+```
+
+Hang forever:
+```
+while (1) {}
+```
+
+## Casting
+
+The `as` keyword is comparable to C++'s `reinterpret_cast`. It is a NOP that unsafely converts the type of an object into another. If the object is a number it's bits will be zero-extended or truncated without preserving sign bits.
+```
+def i32 x = as(i32)x;
+```
+
+## Structs
+
+Make a recursive struct:
+```
+struct MyStruct {
+    i32 a,
+    u8 b,
+    &MyStruct c,
+}
+
+i32 main() {
+    def MyStruct x;
+    set x.a = 1;
+    set x.b = 2u8;
+    set *x.c.a = 3;
+    set *x.c.b = 4u8;
+    return 0;
+}
+```
+
+Crash the compiler because the struct is infinitely sized:
+```
+struct MyStruct {
+    i32 a,
+    u8 b,
+    MyStruct c,
+}
+
+i32 main() {
+    def MyStruct x;
+    return 0;
+}
+```
+
 ## Array Initialization and Indexing
 
 Array initialization uses `u64`:

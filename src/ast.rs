@@ -145,7 +145,7 @@ pub enum GlobalValue {
 pub struct Function {
     pub return_type: ExpressionType,
     pub params: Vec<(ExpressionType, String)>,
-    pub body: Vec<Statement>,
+    pub body: Option<Vec<Statement>>,
 }
 
 // NOTE: cannot use a HashMap because struct fields are ordered.

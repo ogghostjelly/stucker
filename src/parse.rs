@@ -41,8 +41,20 @@ impl<R: io::Read> Parser<R> {
     pub fn parse_func(&mut self) -> Result<(String, Function)> {
         let return_type = self.parse_type()?;
         let func_name = self.next_symbol()?;
-
         let params = self.parse_type_array('(', ')')?;
+
+        if let Some(Token::Operand(';')) = self.peek_token() {
+            _ = self.next_token()?;
+            return Ok((
+                func_name,
+                Function {
+                    return_type,
+                    params,
+                    body: None,
+                },
+            ));
+        }
+
         let body = self.parse_block()?;
 
         Ok((
@@ -50,7 +62,7 @@ impl<R: io::Read> Parser<R> {
             Function {
                 return_type,
                 params,
-                body,
+                body: Some(body),
             },
         ))
     }
@@ -125,6 +137,7 @@ impl<R: io::Read> Parser<R> {
             Some(Token::Operand('<')) => Ok(Some(("<".into(), 100))),
             Some(Token::Operand2('<', '=')) => Ok(Some(("<=".into(), 100))),
             Some(Token::Operand2('=', '=')) => Ok(Some(("==".into(), 100))),
+            Some(Token::Operand2('!', '=')) => Ok(Some(("!=".into(), 100))),
 
             _ => Ok(None),
         }
@@ -573,7 +586,6 @@ impl fmt::Debug for SetAssignment {
 impl fmt::Debug for Function {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{} (", self.return_type)?;
-
         let mut params = self.params.iter();
         if let Some((k, v)) = params.next() {
             write!(f, "{k} {v}")?;
@@ -581,16 +593,20 @@ impl fmt::Debug for Function {
         for (k, v) in params {
             write!(f, ", {k} {v}")?;
         }
-
-        write!(f, ") {{ ")?;
-        let mut body = self.body.iter();
-        if let Some(x) = body.next() {
-            write!(f, "{x:?}")?;
+        write!(f, ")")?;
+        if let Some(body) = &self.body {
+            write!(f, " {{ ")?;
+            let mut body = body.iter();
+            if let Some(x) = body.next() {
+                write!(f, "{x:?}")?;
+            }
+            for x in body {
+                write!(f, " {x:?}")?;
+            }
+            write!(f, " }}")?;
+        } else {
+            write!(f, ";")?;
         }
-        for x in body {
-            write!(f, " {x:?}")?;
-        }
-        write!(f, " }}")?;
         Ok(())
     }
 }
