@@ -1,11 +1,8 @@
 #![allow(clippy::eq_op)]
 
-use std::{
-    fs::File,
-    io::{self, Cursor},
-    process::exit,
-};
+use std::{fs::File, io, path::PathBuf, process::exit};
 
+use clap::Parser as _;
 use codegen::Codegen;
 use parse::Parser;
 
@@ -14,10 +11,23 @@ mod codegen;
 mod parse;
 mod tokenize;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut rdr = Cursor::new(include_str!("../input"));
+#[derive(clap::Parser)]
+struct Cli {
+    /// Path to the input file to be compiled.
+    path: PathBuf,
+    /// Path to output the NASM assembly file.
+    #[clap(long, short)]
+    out: Option<PathBuf>,
+}
 
-    match run(&mut rdr) {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let Cli { path, out } = Cli::parse();
+    let out = out.unwrap_or(PathBuf::from("a.asm"));
+
+    let rdr = File::open(path)?;
+    let wtr = File::create(out)?;
+
+    match run(rdr, wtr) {
         Ok(()) => {}
         Err(e) => {
             eprintln!("{e}");
@@ -28,9 +38,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run<R: io::Read>(rdr: R) -> Result<(), Box<dyn std::error::Error>> {
+fn run<R: io::Read, W: io::Write>(rdr: R, wtr: W) -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = Parser::new(rdr)?;
-    let mut codegen = Codegen::new(File::create("output")?);
+    let mut codegen = Codegen::new(wtr);
 
     codegen.init()?;
 

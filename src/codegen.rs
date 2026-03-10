@@ -8,7 +8,7 @@ use crate::{
         DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue, Number,
         NumberType, SetAssignment, Statement,
     },
-    write_asm,
+    write_asm, write_rdat,
 };
 
 pub struct Codegen<W: io::Write> {
@@ -451,9 +451,10 @@ impl DefinitionTable {
                     None => nasm.push(0, "unit struct")?,
                 })
             }
-            ExpressionType::Ref(_) => nasm.push(8, "ref"), // references are 64-bit
+            ExpressionType::Ref(_) => nasm.push(8, "ref"),
             ExpressionType::Array(_) => nasm.push(0, "array"),
             ExpressionType::Void => Err(Error::CannotAllocVoid),
+            ExpressionType::Str => nasm.push(NumberType::U32.size_bytes(), "str"),
         }
     }
 
@@ -475,6 +476,7 @@ impl DefinitionTable {
             ExpressionType::Ref(_) => nasm.push_hidden(8), // references are 64-bit
             ExpressionType::Array(_) => nasm.push_hidden(0),
             ExpressionType::Void => Err(Error::CannotAllocVoid),
+            ExpressionType::Str => nasm.push_hidden(NumberType::U32.size_bytes()),
         }
     }
 
@@ -633,6 +635,11 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                     }
                     _ => Err(Error::CannotAccessArray),
                 }
+            }
+            Expression::String(s) => {
+                self.nasm.db_cstr(&s, "ebx")?;
+                let idx = self.nasm.push_register("ebx", RegisterSize::S32)?;
+                Ok((ExpressionType::Str, idx))
             }
         }
     }
@@ -980,7 +987,7 @@ pub struct Nasm<W: io::Write> {
     writer: W,
     uniq_index: usize,
     stack_pointer: u16,
-    section_data: Cursor<Vec<u8>>,
+    rodata: Cursor<Vec<u8>>,
 }
 
 impl<W: io::Write> Nasm<W> {
@@ -989,48 +996,48 @@ impl<W: io::Write> Nasm<W> {
             writer,
             uniq_index: 0,
             stack_pointer: 0,
-            section_data: Cursor::new(Vec::new()),
+            rodata: Cursor::new(Vec::new()),
         }
     }
 
     pub fn finalize(&mut self) -> Result<()> {
         writeln!(self.writer)?;
         writeln!(self.writer, "section .data")?;
-        self.section_data.rewind()?;
-        io::copy(&mut self.section_data, &mut self.writer)?;
+        self.rodata.rewind()?;
+        io::copy(&mut self.rodata, &mut self.writer)?;
         Ok(())
     }
 }
 
-/*impl<W: io::Write> Nasm<W> {
-    pub fn dbg_print(&mut self, msg: &str) -> Result<()> {
+impl<W: io::Write> Nasm<W> {
+    pub fn db_cstr(&mut self, msg: &str, reg: &str) -> Result<String> {
+        let mut ret = String::from('"');
+        for ch in msg.as_bytes() {
+            if *ch >= 32 && *ch <= 126 {
+                ret.push(*ch as char);
+            } else {
+                ret.push_str(&format!("\", {ch}, \""));
+            }
+        }
+        ret.push_str("\", 0");
+        let msg = ret.replace(", \"\"", "");
+
+        let uniq_name = format!("db_string_{}", self.uniq_index);
+        self.uniq_index += 1;
+
+        write_rdat!(self, "{uniq_name} db {msg}")?;
+        write_asm!(self, "mov {reg}, {uniq_name}")?;
+
+        Ok(uniq_name)
+    }
+
+    /*pub fn dbg_print(&mut self, msg: &str) -> Result<()> {
         // my debugger output is pretty noise.
         // print a BUNCH so it's easier to spot in the console.
         self.sys_write_msg(2, &format!("\x1b[33mDEBUG: {msg}\x1b[0m\n").repeat(4))
     }
 
-    pub fn sys_write_msg(&mut self, fd: i32, msg: &str) -> Result<()> {
-        fn escape_msg(msg: &str) -> String {
-            let mut ret = String::from('"');
-            for ch in msg.as_bytes() {
-                if *ch >= 32 && *ch <= 126 {
-                    ret.push(*ch as char);
-                } else {
-                    ret.push_str("\", ");
-                    ret.push_str(&format!("0x{ch:0x}"));
-                    ret.push_str(", \"");
-                }
-            }
-            ret.push('"');
-            ret.replace(", \"\"", "")
-        }
-
-        let uniq_name = format!("sys_write_msg_{}", self.uniq_index);
-        self.uniq_index += 1;
-
-        write_dat!(self, "{uniq_name} db {}", escape_msg(msg))?;
-        write_dat!(self, "{uniq_name}_len equ $ -{uniq_name}")?;
-
+    pub fn sys_write_msg(&mut self, fd: i32, uniq_name: &str) -> Result<()> {
         self.push_register("eax", RegisterSize::S32)?;
         self.push_register("ebx", RegisterSize::S32)?;
         self.push_register("ecx", RegisterSize::S32)?;
@@ -1048,8 +1055,8 @@ impl<W: io::Write> Nasm<W> {
         self.pop_register("eax")?;
 
         Ok(())
-    }
-}*/
+    }*/
+}
 
 impl<W: io::Write> Nasm<W> {
     pub fn sum(
@@ -1815,11 +1822,11 @@ macro_rules! write_asm {
 }
 
 #[macro_export]
-macro_rules! write_dat {
+macro_rules! write_rdat {
     ($dst:expr, $($arg:tt)*) => {{
         use std::io::Write;
-        write!($dst.section_data, "    ")
-            .and_then(|_| writeln!($dst.section_data, $($arg)*))
+        write!($dst.rodata, "    ")
+            .and_then(|_| writeln!($dst.rodata, $($arg)*))
     }};
 }
 

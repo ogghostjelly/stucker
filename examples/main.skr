@@ -50,6 +50,8 @@ HashMap insert(&HashMap map, i32 key, i32 value) {
 }
 
 i32 main() {
+    def str s = "Hello, World!\n";
+
     def HashMap map = makemap(4u16);
 
     insert(&map, 1, 1);

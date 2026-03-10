@@ -185,6 +185,11 @@ impl<R: io::Read> Parser<R> {
                 self.expect_operand(')')?;
                 Ok(Expression::As(Box::new((ty, self.parse_primary()?))))
             }
+            Some(Token::String(s)) => {
+                let s = s.clone();
+                _ = self.next_token()?;
+                Ok(Expression::String(s))
+            }
             Some(Token::Symbol(_)) => self.parse_ident(),
             Some(Token::Number(_)) => self.parse_number(),
             Some(Token::Operand('(')) => self.parse_paren(),
@@ -367,6 +372,7 @@ impl<R: io::Read> Parser<R> {
             "f32" => ExpressionType::Number(NumberType::F32),
             "f64" => ExpressionType::Number(NumberType::F64),
             "void" => ExpressionType::Void,
+            "str" => ExpressionType::Str,
             _ => ExpressionType::Struct(sym),
         })
     }
@@ -568,6 +574,9 @@ impl fmt::Debug for Expression {
             Expression::ArrayAccess(inn) => {
                 let (expr, idx) = inn.as_ref();
                 write!(f, "({expr:?})[{idx:?}]")
+            }
+            Expression::String(s) => {
+                write!(f, "\"{}\"", s.replace("\"", r#"\""#).replace("\\", r#"\\"#))
             }
         }
     }

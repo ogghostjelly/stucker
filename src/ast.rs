@@ -98,6 +98,7 @@ pub enum Expression {
     InitArray(Box<(Expression, ExpressionType)>),
     FieldAccess(Box<(Expression, String)>),
     ArrayAccess(Box<(Expression, Expression)>),
+    String(String),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -106,6 +107,7 @@ pub enum ExpressionType {
     Struct(String),
     Ref(Box<ExpressionType>),
     Array(Box<ExpressionType>),
+    Str,
     Void,
 }
 
@@ -133,6 +135,7 @@ impl fmt::Display for ExpressionType {
             ExpressionType::Ref(x) => write!(f, "&{x}"),
             ExpressionType::Array(x) => write!(f, "[]{x}"),
             ExpressionType::Void => write!(f, "void"),
+            ExpressionType::Str => write!(f, "str"),
         }
     }
 }

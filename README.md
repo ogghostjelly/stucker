@@ -3,30 +3,31 @@
 Stack fucker.
 
 > [!NOTE]
-> Stack memory is just memory, you can treat it how you want.
+> And when Alexander saw the breadth of his dominion, he wept for there were no more stacks to fuck.
 
-A compiled programming language that implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations.
+They said you can't resize data on the stack. I said you can, you just need to make your own compiler.
+
+It implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations.
 
 ```
+void double_size(&[]i32 arr, u64 size) {
+    set *arr = [size * 2u64]i32;
+}
+
 i32 main() {
-    # create a list with 3 items
-    def u64 size = 3;
-    def []i32 x = [size]i32;
+    # init array with 3 items
+    def u64 size = 3u64;
+    def []i32 arr = [size]i32;
+    
+    double_size(&arr, size);
 
-    # put some numbers in the list
-    # (numbers default to `i32` if not given a specific type)
-    set x[0u64] = 1;
-    set x[1u64] = 2;
-    set x[2u64] = 3;
+    set *(&arr)[4u16] = 3;
 
-    # double capacity
-    set size = size * 2;
-    set x = [size]i32;
-
-    # return an exit code
     return 0;
 }
 ```
+
+This isn't the same as `alloca` because you can resize an existing allocation!
 
 The compiler outputs NASM assembly. You'll need to use `nasm` to build executable binaries. It's only been tested on x86-64 Linux. Any other OS or architecture isn't guaranteed to work. (and likely won't)
 
@@ -57,13 +58,6 @@ In-memory this would look like:
 <3> <12>
         |
        rsp
-```
-
-Of course, the compiler wouldn't literally generate that assembly since it's more efficient to do:
-```
-sub rsp, 12
-mov dword [rsp+8], 3
-mov qword [rsp], 12
 ```
 
 ## References (`&`)

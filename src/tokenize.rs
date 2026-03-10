@@ -21,6 +21,16 @@ impl<R: io::Read> Tokenizer<R> {
         self.skip_whitespace()?;
 
         match self.peek() {
+            Some(b'\'') => {
+                _ = self.pop()?;
+                let ch = match self.pop()? {
+                    Some(ch) => ch,
+                    None => return Err(Error::EmptyChar),
+                };
+                self.expect(b'\'')?;
+                Ok(Some(Token::Number(Number::U8(ch))))
+            }
+            Some(b'"') => Ok(Some(Token::String(self.parse_string()?))),
             Some(ch) if Self::is_begin_number(ch) => {
                 _ = self.pop()?;
                 Ok(Some(Token::Number(self.parse_number(ch)?)))
@@ -67,6 +77,31 @@ impl<R: io::Read> Tokenizer<R> {
         self.skip_until(b'\n')?;
         _ = self.pop()?; // eat the newline character
         Ok(())
+    }
+
+    pub fn parse_string(&mut self) -> Result<String> {
+        self.expect(b'"')?;
+        let mut string = String::new();
+
+        loop {
+            match self.pop()? {
+                Some(b'"') => {
+                    break Ok(string);
+                }
+                Some(b'\\') => match self.pop()? {
+                    Some(b'n') => string.push('\n'),
+                    Some(b't') => string.push('\t'),
+                    Some(b'r') => string.push('\r'),
+                    Some(b'"') => string.push('"'),
+                    Some(b'\'') => string.push('\''),
+                    _ => return Err(Error::InvalidStringEscape),
+                },
+                Some(ch) => {
+                    string.push(ch as char);
+                }
+                None => return Err(Error::Expected('"')),
+            }
+        }
     }
 
     pub fn parse_number(&mut self, begin: u8) -> Result<Number> {
@@ -156,6 +191,16 @@ impl<R: io::Read> Tokenizer<R> {
             Some(string)
         })
     }
+
+    pub fn expect(&mut self, ch: u8) -> Result<u8> {
+        match self.peek() {
+            Some(x) if ch == x => {
+                _ = self.pop()?;
+                Ok(ch)
+            }
+            _ => Err(Error::Expected(ch as char)),
+        }
+    }
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -170,6 +215,12 @@ pub enum Error {
     ParseInt(#[from] ParseIntError),
     #[error("parse float: {0}")]
     ParseFloat(#[from] ParseFloatError),
+    #[error("expected {0}")]
+    Expected(char),
+    #[error("char \'_\' cannot be empty")]
+    EmptyChar,
+    #[error("invalid string escape sequence")]
+    InvalidStringEscape,
 }
 
 #[derive(Debug)]
@@ -178,4 +229,5 @@ pub enum Token {
     Operand(char),
     Operand2(char, char),
     Number(Number),
+    String(String),
 }
