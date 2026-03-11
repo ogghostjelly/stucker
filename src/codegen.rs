@@ -5,8 +5,8 @@ use std::{
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue, Number,
-        NumberType, SetAssignment, Statement,
+        Abi, DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue,
+        Number, NumberType, SetAssignment, Statement,
     },
     write_asm, write_rdat,
 };
@@ -40,10 +40,10 @@ impl<W: io::Write> Codegen<W> {
     }
 
     pub fn init(&mut self) -> Result<()> {
-        write_asm!(self.nasm, "global _start")?;
+        write_asm!(self.nasm, "global main")?;
         write_asm!(self.nasm, "section .text")?;
 
-        self.nasm.raw_label("_start")?;
+        self.nasm.raw_label("main")?;
         write_asm!(self.nasm, "mov rbp, 0")?;
 
         let (_, idx) = FunctionCodegen::new(&mut self.nasm, &mut VarTable::default(), &self.def)
@@ -79,6 +79,7 @@ impl<W: io::Write> Codegen<W> {
                     return_type,
                     params,
                     body,
+                    abi,
                 } = function;
 
                 if name == "main" {
@@ -93,6 +94,9 @@ impl<W: io::Write> Codegen<W> {
                 let mut def_params = vec![];
 
                 for (param_type, _) in &params {
+                    if let ExpressionType::Struct(struc) = param_type {
+                        _ = self.def.get_struct(struc)?;
+                    }
                     def_params.push(param_type.clone())
                 }
 
@@ -104,21 +108,87 @@ impl<W: io::Write> Codegen<W> {
                     },
                 );
 
-                if let Some(body) = body {
-                    self.codegen_prologue(&return_type, &name)?;
+                match abi {
+                    Abi::C => {
+                        if body.is_some() {
+                            return Err(Error::ExternFunctionBody);
+                        }
 
-                    let mut var = VarTable::default();
+                        self.codegen_prologue(&return_type, &name)?;
+                        write_asm!(self.nasm, "extern {name}")?;
 
-                    for (param_type, param_name) in params {
-                        let idx = self.nasm.push_supress();
-                        var.data.insert(param_name, (param_type.clone(), idx));
+                        let mut p = Vec::with_capacity(params.len());
+                        for (i, (ty, _)) in params.into_iter().enumerate() {
+                            let idx = self.nasm.push_supress();
+                            p.push((i, ty, idx))
+                        }
+                        p.reverse();
+
+                        let reg64 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+                        let reg32 = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+                        let reg16 = ["di", "si", "dx", "cx", "r8w", "r9w"];
+                        let reg8 = ["dil", "sil", "dl", "cl", "r8b", "r9b"];
+                        let mut stack_size = 0;
+
+                        for (i, ty, idx) in p {
+                            let ExpressionType::Number(numty) = ty else {
+                                return Err(Error::ExternCInvalidParameter);
+                            };
+
+                            let (reg, size) = match numty {
+                                NumberType::I8 => (reg8.get(i), RegisterSize::S8),
+                                NumberType::I16 => (reg16.get(i), RegisterSize::S16),
+                                NumberType::I32 => (reg32.get(i), RegisterSize::S32),
+                                NumberType::I64 => (reg64.get(i), RegisterSize::S64),
+                                NumberType::U8 => (reg8.get(i), RegisterSize::S8),
+                                NumberType::U16 => (reg16.get(i), RegisterSize::S16),
+                                NumberType::U32 => (reg32.get(i), RegisterSize::S32),
+                                NumberType::U64 => (reg64.get(i), RegisterSize::S64),
+                                NumberType::F32 | NumberType::F64 => {
+                                    return Err(Error::ExternCInvalidParameter);
+                                }
+                            };
+
+                            match reg {
+                                Some(reg) => {
+                                    self.nasm.idx2addr("r10", &idx)?;
+                                    write_asm!(self.nasm, "mov {reg}, [r10+8]")?;
+                                }
+                                None => {
+                                    self.nasm.idx2addr("rbx", &idx)?;
+                                    write_asm!(self.nasm, "mov {}, [rbx+8]", size.b())?;
+                                    write_asm!(self.nasm, "push {}", size.b())?;
+                                    stack_size += size.size_bytes();
+                                }
+                            }
+                        }
+
+                        write_asm!(self.nasm, "mov rdi, db_string_0")?;
+                        write_asm!(self.nasm, "xor eax, eax")?;
+                        write_asm!(self.nasm, "call {name}")?;
+
+                        write_asm!(self.nasm, "sub rsp, {stack_size}")?;
+
+                        self.nasm.ret(&return_type)?;
                     }
+                    Abi::Stucker => {
+                        if let Some(body) = body {
+                            self.codegen_prologue(&return_type, &name)?;
 
-                    for stmt in body {
-                        self.codegen_stmt(&return_type, &mut var, stmt)?;
+                            let mut var = VarTable::default();
+
+                            for (param_type, param_name) in params {
+                                let idx = self.nasm.push_supress();
+                                var.data.insert(param_name, (param_type.clone(), idx));
+                            }
+
+                            for stmt in body {
+                                self.codegen_stmt(&return_type, &mut var, stmt)?;
+                            }
+
+                            self.nasm.ret(&return_type)?;
+                        }
                     }
-
-                    self.nasm.ret(&return_type)?;
                 }
 
                 Ok(())
@@ -454,7 +524,6 @@ impl DefinitionTable {
             ExpressionType::Ref(_) => nasm.push(8, "ref"),
             ExpressionType::Array(_) => nasm.push(0, "array"),
             ExpressionType::Void => Err(Error::CannotAllocVoid),
-            ExpressionType::Str => nasm.push(NumberType::U32.size_bytes(), "str"),
         }
     }
 
@@ -476,7 +545,6 @@ impl DefinitionTable {
             ExpressionType::Ref(_) => nasm.push_hidden(8), // references are 64-bit
             ExpressionType::Array(_) => nasm.push_hidden(0),
             ExpressionType::Void => Err(Error::CannotAllocVoid),
-            ExpressionType::Str => nasm.push_hidden(NumberType::U32.size_bytes()),
         }
     }
 
@@ -637,9 +705,9 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
                 }
             }
             Expression::String(s) => {
-                self.nasm.db_cstr(&s, "ebx")?;
-                let idx = self.nasm.push_register("ebx", RegisterSize::S32)?;
-                Ok((ExpressionType::Str, idx))
+                self.nasm.db_cstr(&s, "rbx")?;
+                let idx = self.nasm.push_register("rbx", RegisterSize::S64)?;
+                Ok((ExpressionType::Number(NumberType::U64), idx))
             }
         }
     }
@@ -1025,7 +1093,7 @@ impl<W: io::Write> Nasm<W> {
         let uniq_name = format!("db_string_{}", self.uniq_index);
         self.uniq_index += 1;
 
-        write_rdat!(self, "{uniq_name} db {msg}")?;
+        write_rdat!(self, "{uniq_name}: db {msg}")?;
         write_asm!(self, "mov {reg}, {uniq_name}")?;
 
         Ok(uniq_name)
@@ -1850,7 +1918,7 @@ pub enum Error {
     UnknownSymbol(String),
     #[error("unknown function: {0}")]
     UnknownFunction(String),
-    #[error("arity mismatch: expected {0} parameters but got {0}")]
+    #[error("arity mismatch: expected {0} parameters but got {1}")]
     ArityMismatch(usize, usize),
     #[error("unknown type: {0}")]
     UnknownType(String),
@@ -1870,4 +1938,8 @@ pub enum Error {
     BitwiseFloat,
     #[error("can only bit-shift by a u16")]
     BitShiftU16,
+    #[error("cannot give a function body to extern functions")]
+    ExternFunctionBody,
+    #[error("only non-float numeric types can be used in extern \"C\" functions")]
+    ExternCInvalidParameter,
 }

@@ -2,8 +2,8 @@ use std::{collections::HashSet, fmt, io, mem};
 
 use crate::{
     ast::{
-        DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue, Number,
-        NumberType, SetAssignment, Statement, Struct,
+        Abi, DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue,
+        Number, NumberType, SetAssignment, Statement, Struct,
     },
     tokenize::{self, Token, Tokenizer},
 };
@@ -39,9 +39,21 @@ impl<R: io::Read> Parser<R> {
     }
 
     pub fn parse_func(&mut self) -> Result<(String, Function)> {
+        let abi = if matches!(self.peek_token(), Some(Token::Symbol(sym)) if sym == "extern") {
+            _ = self.next_token()?;
+            let abi_name = self.next_string()?;
+            match abi_name.as_str() {
+                "C" => Abi::C,
+                "Stucker" => Abi::Stucker,
+                _ => return Err(Error::UnknownABI(abi_name)),
+            }
+        } else {
+            Abi::Stucker
+        };
+
         let return_type = self.parse_type()?;
         let func_name = self.next_symbol()?;
-        let params = self.parse_type_array('(', ')')?;
+        let (params, _) = self.parse_type_array('(', ')', false)?;
 
         if let Some(Token::Operand(';')) = self.peek_token() {
             _ = self.next_token()?;
@@ -51,6 +63,7 @@ impl<R: io::Read> Parser<R> {
                     return_type,
                     params,
                     body: None,
+                    abi,
                 },
             ));
         }
@@ -63,6 +76,7 @@ impl<R: io::Read> Parser<R> {
                 return_type,
                 params,
                 body: Some(body),
+                abi,
             },
         ))
     }
@@ -74,7 +88,7 @@ impl<R: io::Read> Parser<R> {
 
         let name = self.next_symbol()?;
 
-        let body = self.parse_type_array('{', '}')?;
+        let (body, _) = self.parse_type_array('{', '}', false)?;
         let mut keys = HashSet::new();
 
         for (_, field) in &body {
@@ -372,7 +386,6 @@ impl<R: io::Read> Parser<R> {
             "f32" => ExpressionType::Number(NumberType::F32),
             "f64" => ExpressionType::Number(NumberType::F64),
             "void" => ExpressionType::Void,
-            "str" => ExpressionType::Str,
             _ => ExpressionType::Struct(sym),
         })
     }
@@ -406,11 +419,20 @@ impl<R: io::Read> Parser<R> {
         }
     }
 
+    pub fn next_string(&mut self) -> Result<String> {
+        match self.next_token()? {
+            Some(Token::String(s)) => Ok(s),
+            Some(_) => Err(Error::ExpectedString),
+            None => Err(Error::UnexpectedEof),
+        }
+    }
+
     pub fn parse_type_array(
         &mut self,
         begin: char,
         end: char,
-    ) -> Result<Vec<(ExpressionType, String)>> {
+        allow_variadic: bool,
+    ) -> Result<(Vec<(ExpressionType, String)>, Option<String>)> {
         self.expect_operand(begin)?;
 
         let mut params = vec![];
@@ -420,7 +442,17 @@ impl<R: io::Read> Parser<R> {
                 && *ch == end
             {
                 _ = self.next_token()?;
-                break Ok(params);
+                break Ok((params, None));
+            }
+
+            if allow_variadic && let Some(Token::Elipses) = self.peek_token() {
+                _ = self.next_token()?;
+                let sym = self.next_symbol()?;
+                if let Some(Token::Operand(',')) = self.peek_token() {
+                    _ = self.next_token()?;
+                }
+                self.expect_operand(')')?;
+                break Ok((params, Some(sym)));
             }
 
             let param_type = self.parse_type()?;
@@ -470,8 +502,12 @@ pub enum Error {
     UnknownToken,
     #[error("expected number")]
     ExpectedNumber,
+    #[error("expected string")]
+    ExpectedString,
     #[error("duplicate field '{0}'")]
     DuplicateField(String),
+    #[error("unknown abi: {0}")]
+    UnknownABI(String),
 }
 
 impl fmt::Debug for GlobalValue {

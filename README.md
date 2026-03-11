@@ -93,6 +93,17 @@ A stable pointer means it will always point to that object and will only be inva
 
 # Notes
 
+## Buffered Print
+
+```
+extern "C" void printf(u64 fmt);
+
+int main() {
+    printf("Hello, World");
+}
+```
+This won't print any output because `printf` is buffered and stucker doesn't automatically flush buffers when the program ends. You need to add a `\n` or manually flush stdout with something like `fflush`.
+
 ## Function Prototypes
 
 Define function prototypes:

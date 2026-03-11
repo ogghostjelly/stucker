@@ -107,7 +107,6 @@ pub enum ExpressionType {
     Struct(String),
     Ref(Box<ExpressionType>),
     Array(Box<ExpressionType>),
-    Str,
     Void,
 }
 
@@ -135,7 +134,6 @@ impl fmt::Display for ExpressionType {
             ExpressionType::Ref(x) => write!(f, "&{x}"),
             ExpressionType::Array(x) => write!(f, "[]{x}"),
             ExpressionType::Void => write!(f, "void"),
-            ExpressionType::Str => write!(f, "str"),
         }
     }
 }
@@ -149,6 +147,7 @@ pub struct Function {
     pub return_type: ExpressionType,
     pub params: Vec<(ExpressionType, String)>,
     pub body: Option<Vec<Statement>>,
+    pub abi: Abi,
 }
 
 // NOTE: cannot use a HashMap because struct fields are ordered.
@@ -183,4 +182,9 @@ pub struct SetAssignment {
     pub var_dest: Expression,
     pub var_src: Expression,
     pub deref: bool,
+}
+
+pub enum Abi {
+    C,
+    Stucker,
 }

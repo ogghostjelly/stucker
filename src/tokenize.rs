@@ -53,6 +53,11 @@ impl<R: io::Read> Tokenizer<R> {
                         _ = self.pop()?;
                         Ok(Some(Token::Operand2(ch as char, ch as char)))
                     }
+                    (b'.', Some(b'.')) => {
+                        _ = self.pop()?;
+                        self.expect(b'.')?;
+                        Ok(Some(Token::Elipses))
+                    }
                     _ => Ok(Some(Token::Operand(ch as char))),
                 }
             }
@@ -228,6 +233,7 @@ pub enum Token {
     Symbol(String),
     Operand(char),
     Operand2(char, char),
+    Elipses,
     Number(Number),
     String(String),
 }

@@ -1,3 +1,5 @@
+extern "C" void printf(u64 fmt);
+
 HashMap insert(&HashMap map, i32 key, i32 value);
 
 struct Bucket {
@@ -50,7 +52,7 @@ HashMap insert(&HashMap map, i32 key, i32 value) {
 }
 
 i32 main() {
-    def str s = "Hello, World!\n";
+    printf("Hello, World!\n");
 
     def HashMap map = makemap(4u16);
 
