@@ -53,7 +53,7 @@ impl<R: io::Read> Parser<R> {
 
         let return_type = self.parse_type()?;
         let func_name = self.next_symbol()?;
-        let (params, _) = self.parse_type_array('(', ')', false)?;
+        let (params, is_variadic) = self.parse_type_array('(', ')', true)?;
 
         if let Some(Token::Operand(';')) = self.peek_token() {
             _ = self.next_token()?;
@@ -64,6 +64,7 @@ impl<R: io::Read> Parser<R> {
                     params,
                     body: None,
                     abi,
+                    is_variadic,
                 },
             ));
         }
@@ -77,6 +78,7 @@ impl<R: io::Read> Parser<R> {
                 params,
                 body: Some(body),
                 abi,
+                is_variadic,
             },
         ))
     }
@@ -432,7 +434,7 @@ impl<R: io::Read> Parser<R> {
         begin: char,
         end: char,
         allow_variadic: bool,
-    ) -> Result<(Vec<(ExpressionType, String)>, Option<String>)> {
+    ) -> Result<(Vec<(ExpressionType, String)>, bool)> {
         self.expect_operand(begin)?;
 
         let mut params = vec![];
@@ -442,17 +444,16 @@ impl<R: io::Read> Parser<R> {
                 && *ch == end
             {
                 _ = self.next_token()?;
-                break Ok((params, None));
+                break Ok((params, false));
             }
 
             if allow_variadic && let Some(Token::Elipses) = self.peek_token() {
                 _ = self.next_token()?;
-                let sym = self.next_symbol()?;
                 if let Some(Token::Operand(',')) = self.peek_token() {
                     _ = self.next_token()?;
                 }
                 self.expect_operand(')')?;
-                break Ok((params, Some(sym)));
+                break Ok((params, true));
             }
 
             let param_type = self.parse_type()?;

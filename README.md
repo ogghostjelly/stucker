@@ -93,6 +93,9 @@ A stable pointer means it will always point to that object and will only be inva
 
 # Notes
 
+## String Types
+Static strings are `u64` types. 64-bit pointers into program memory. There are no dynamic string types but you might be able to make your own.
+
 ## Buffered Print
 
 ```

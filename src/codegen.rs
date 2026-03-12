@@ -22,9 +22,20 @@ pub struct DefinitionTable {
     struct_table: HashMap<String, DefinedStruct>,
 }
 
-pub struct DefinedFunction {
+pub enum DefinedFunction {
+    Stucker(StuckerFunction),
+    C(CFunction),
+}
+
+pub struct StuckerFunction {
     return_type: ExpressionType,
     params: Vec<ExpressionType>,
+}
+
+pub struct CFunction {
+    return_type: Option<NumberType>,
+    params: Vec<NumberType>,
+    is_variadic: bool,
 }
 
 pub struct DefinedStruct {
@@ -48,10 +59,10 @@ impl<W: io::Write> Codegen<W> {
 
         let (_, idx) = FunctionCodegen::new(&mut self.nasm, &mut VarTable::default(), &self.def)
             .codegen_call(
-                &DefinedFunction {
+                &DefinedFunction::Stucker(StuckerFunction {
                     return_type: ExpressionType::Number(NumberType::I32),
                     params: vec![],
-                },
+                }),
                 "main".into(),
                 vec![],
             )?;
@@ -80,6 +91,7 @@ impl<W: io::Write> Codegen<W> {
                     params,
                     body,
                     abi,
+                    is_variadic,
                 } = function;
 
                 if name == "main" {
@@ -89,24 +101,16 @@ impl<W: io::Write> Codegen<W> {
                     if !params.is_empty() {
                         return Err(Error::MainInvalidSignature);
                     }
+                    if is_variadic {
+                        return Err(Error::MainInvalidSignature);
+                    }
                 }
-
-                let mut def_params = vec![];
 
                 for (param_type, _) in &params {
                     if let ExpressionType::Struct(struc) = param_type {
                         _ = self.def.get_struct(struc)?;
                     }
-                    def_params.push(param_type.clone())
                 }
-
-                self.def.fn_table.insert(
-                    name.clone(),
-                    DefinedFunction {
-                        return_type: return_type.clone(),
-                        params: def_params,
-                    },
-                );
 
                 match abi {
                     Abi::C => {
@@ -114,64 +118,46 @@ impl<W: io::Write> Codegen<W> {
                             return Err(Error::ExternFunctionBody);
                         }
 
-                        self.codegen_prologue(&return_type, &name)?;
-                        write_asm!(self.nasm, "extern {name}")?;
+                        let return_type = match return_type {
+                            ExpressionType::Number(numty) => Some(numty),
+                            ExpressionType::Void => None,
+                            _ => return Err(Error::ExternCInvalidParameter),
+                        };
 
-                        let mut p = Vec::with_capacity(params.len());
-                        for (i, (ty, _)) in params.into_iter().enumerate() {
-                            let idx = self.nasm.push_supress();
-                            p.push((i, ty, idx))
-                        }
-                        p.reverse();
+                        let params = params
+                            .iter()
+                            .map(|(x, _)| match x {
+                                ExpressionType::Number(numty) => Ok(*numty),
+                                _ => Err(Error::ExternCInvalidParameter),
+                            })
+                            .collect::<Result<Vec<_>>>()?;
 
-                        let reg64 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
-                        let reg32 = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
-                        let reg16 = ["di", "si", "dx", "cx", "r8w", "r9w"];
-                        let reg8 = ["dil", "sil", "dl", "cl", "r8b", "r9b"];
-                        let mut stack_size = 0;
+                        self.def.fn_table.insert(
+                            name.clone(),
+                            DefinedFunction::C(CFunction {
+                                return_type,
+                                params,
+                                is_variadic,
+                            }),
+                        );
 
-                        for (i, ty, idx) in p {
-                            let ExpressionType::Number(numty) = ty else {
-                                return Err(Error::ExternCInvalidParameter);
-                            };
-
-                            let (reg, size) = match numty {
-                                NumberType::I8 => (reg8.get(i), RegisterSize::S8),
-                                NumberType::I16 => (reg16.get(i), RegisterSize::S16),
-                                NumberType::I32 => (reg32.get(i), RegisterSize::S32),
-                                NumberType::I64 => (reg64.get(i), RegisterSize::S64),
-                                NumberType::U8 => (reg8.get(i), RegisterSize::S8),
-                                NumberType::U16 => (reg16.get(i), RegisterSize::S16),
-                                NumberType::U32 => (reg32.get(i), RegisterSize::S32),
-                                NumberType::U64 => (reg64.get(i), RegisterSize::S64),
-                                NumberType::F32 | NumberType::F64 => {
-                                    return Err(Error::ExternCInvalidParameter);
-                                }
-                            };
-
-                            match reg {
-                                Some(reg) => {
-                                    self.nasm.idx2addr("r10", &idx)?;
-                                    write_asm!(self.nasm, "mov {reg}, [r10+8]")?;
-                                }
-                                None => {
-                                    self.nasm.idx2addr("rbx", &idx)?;
-                                    write_asm!(self.nasm, "mov {}, [rbx+8]", size.b())?;
-                                    write_asm!(self.nasm, "push {}", size.b())?;
-                                    stack_size += size.size_bytes();
-                                }
-                            }
-                        }
-
-                        write_asm!(self.nasm, "mov rdi, db_string_0")?;
-                        write_asm!(self.nasm, "xor eax, eax")?;
-                        write_asm!(self.nasm, "call {name}")?;
-
-                        write_asm!(self.nasm, "sub rsp, {stack_size}")?;
-
-                        self.nasm.ret(&return_type)?;
+                        writeln!(self.nasm.writer, "\nextern {name}")?;
+                        _ = self.nasm.global_label(&name)?;
+                        write_asm!(self.nasm, "jmp {name}")?;
                     }
                     Abi::Stucker => {
+                        if is_variadic {
+                            return Err(Error::VariadicStuckerFunction);
+                        }
+
+                        self.def.fn_table.insert(
+                            name.clone(),
+                            DefinedFunction::Stucker(StuckerFunction {
+                                return_type: return_type.clone(),
+                                params: params.iter().map(|(x, _)| x.clone()).collect(),
+                            }),
+                        );
+
                         if let Some(body) = body {
                             self.codegen_prologue(&return_type, &name)?;
 
@@ -274,10 +260,10 @@ impl<W: io::Write> Codegen<W> {
 
         self.def.fn_table.insert(
             name,
-            DefinedFunction {
+            DefinedFunction::Stucker(StuckerFunction {
                 return_type: return_type.clone(),
                 params,
-            },
+            }),
         );
 
         body(self, param_idxs)?;
@@ -812,6 +798,20 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
             params.push(self.codegen_expression(expr)?);
         }
 
+        let e = match func {
+            DefinedFunction::Stucker(func) => self.codegen_call_stucker(func, name, params),
+            DefinedFunction::C(func) => self.codegen_call_c(func, name, params),
+        }?;
+
+        Ok(e)
+    }
+
+    pub fn codegen_call_stucker(
+        &mut self,
+        func: &StuckerFunction,
+        name: String,
+        params: Vec<(ExpressionType, Index)>,
+    ) -> Result<(ExpressionType, Index)> {
         if func.params.len() != params.len() {
             return Err(Error::ArityMismatch(func.params.len(), params.len()));
         }
@@ -845,6 +845,83 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         self.nasm.pop_supress(); // the called function will pop rax
 
         Ok((func.return_type.clone(), ret_idx))
+    }
+
+    pub fn codegen_call_c(
+        &mut self,
+        func: &CFunction,
+        name: String,
+        params: Vec<(ExpressionType, Index)>,
+    ) -> Result<(ExpressionType, Index)> {
+        if !func.is_variadic && func.params.len() != params.len() {
+            return Err(Error::ArityMismatch(func.params.len(), params.len()));
+        }
+        if func.is_variadic && func.params.len() > params.len() {
+            return Err(Error::ArityMismatch(func.params.len(), params.len()));
+        }
+
+        let p = params
+            .into_iter()
+            .enumerate()
+            .map(|(x, (y, z))| (x, y, z))
+            .rev()
+            .collect::<Vec<(usize, ExpressionType, Index)>>();
+
+        let reg64 = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"];
+        let reg32 = ["edi", "esi", "edx", "ecx", "r8d", "r9d"];
+        let reg16 = ["di", "si", "dx", "cx", "r8w", "r9w"];
+        let reg8 = ["dil", "sil", "dl", "cl", "r8b", "r9b"];
+        let mut stack_size = 0;
+
+        for (i, ty, idx) in p {
+            let ExpressionType::Number(numty) = ty else {
+                return Err(Error::ExternCInvalidParameter);
+            };
+
+            let (reg, size) = match numty {
+                NumberType::I8 => (reg8.get(i), RegisterSize::S8),
+                NumberType::I16 => (reg16.get(i), RegisterSize::S16),
+                NumberType::I32 => (reg32.get(i), RegisterSize::S32),
+                NumberType::I64 => (reg64.get(i), RegisterSize::S64),
+                NumberType::U8 => (reg8.get(i), RegisterSize::S8),
+                NumberType::U16 => (reg16.get(i), RegisterSize::S16),
+                NumberType::U32 => (reg32.get(i), RegisterSize::S32),
+                NumberType::U64 => (reg64.get(i), RegisterSize::S64),
+                NumberType::F32 | NumberType::F64 => {
+                    return Err(Error::ExternCInvalidParameter);
+                }
+            };
+
+            match reg {
+                Some(reg) => {
+                    self.nasm.idx2addr("r10", &idx)?;
+                    write_asm!(self.nasm, "mov {reg}, [r10+8]")?;
+                }
+                None => {
+                    self.nasm.idx2addr("rbx", &idx)?;
+                    write_asm!(self.nasm, "mov {}, [rbx+8]", size.b())?;
+                    write_asm!(self.nasm, "push {}", size.b())?;
+                    stack_size += size.size_bytes();
+                }
+            }
+        }
+
+        write_asm!(self.nasm, "mov rdi, db_string_0")?;
+        write_asm!(self.nasm, "xor eax, eax")?;
+        let label = self.nasm.get_global_label_name(&name);
+        write_asm!(self.nasm, "call {label}")?;
+
+        if stack_size != 0 {
+            write_asm!(self.nasm, "sub rsp, {stack_size}")?;
+        }
+
+        match &func.return_type {
+            Some(return_type) => {
+                let idx = self.nasm.push_register("rax", RegisterSize::S64)?;
+                Ok((ExpressionType::Number(*return_type), idx))
+            }
+            None => Ok((ExpressionType::Void, Index::void())),
+        }
     }
 
     pub fn codegen_binop(
@@ -1942,4 +2019,6 @@ pub enum Error {
     ExternFunctionBody,
     #[error("only non-float numeric types can be used in extern \"C\" functions")]
     ExternCInvalidParameter,
+    #[error("stucker functions cannot be variadic")]
+    VariadicStuckerFunction,
 }

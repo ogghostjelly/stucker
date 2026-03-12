@@ -148,6 +148,7 @@ pub struct Function {
     pub params: Vec<(ExpressionType, String)>,
     pub body: Option<Vec<Statement>>,
     pub abi: Abi,
+    pub is_variadic: bool,
 }
 
 // NOTE: cannot use a HashMap because struct fields are ordered.

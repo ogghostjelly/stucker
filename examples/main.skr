@@ -1,4 +1,4 @@
-extern "C" void printf(u64 fmt);
+extern "C" void printf(u64 fmt, ...);
 
 HashMap insert(&HashMap map, i32 key, i32 value);
 
@@ -52,7 +52,7 @@ HashMap insert(&HashMap map, i32 key, i32 value) {
 }
 
 i32 main() {
-    printf("Hello, World!\n");
+    printf("Hello, World! %d\n", 1);
 
     def HashMap map = makemap(4u16);
 
