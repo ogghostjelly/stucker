@@ -13,6 +13,8 @@ struct HashMap {
 }
 
 HashMap makemap(u16 capacity) {
+    printf("makemap(%d)\n", capacity);
+
     def HashMap map;
     
     set map.buckets = [as(u64)capacity]Bucket; 
@@ -27,6 +29,8 @@ HashMap makemap(u16 capacity) {
 }
 
 HashMap insert(&HashMap map, i32 key, i32 value) {
+    printf("insert(map, %d, %d)\n", key, value);
+
     def u16 i = as(u16)(key % as(i32)*map.capacity);
 
     def u8 key_matches = *map.buckets[i].key == key;
@@ -38,6 +42,10 @@ HashMap insert(&HashMap map, i32 key, i32 value) {
     } else {
         def u16 new_cap = *map.capacity * 2u16;
         def HashMap new_map = makemap(new_cap);
+
+        for (def u16 i = 0u16; i < new_cap; set i = i + 1u16) {
+            printf("%d %d\n", *(&new_map).buckets[i].key, *(&new_map).buckets[i].value);
+        }
         
         for (def u16 i = 0u16; i < new_cap; set i = i + 1u16) {
             if (*map.buckets[i].key != 2147483647 && *map.buckets[i].value != 2147483647) {
@@ -51,12 +59,21 @@ HashMap insert(&HashMap map, i32 key, i32 value) {
     }
 }
 
+struct Abc {
+    []i32 buckets,
+}
+
 i32 main() {
-    printf("Hello, World! %d\n", 1);
+    def Abc map;
+    
+    set map.buckets = [2u64]i32; 
 
-    def HashMap map = makemap(4u16);
+    for (def u16 i = 0u16; i < 2u16; set i = i + 1u16) {
+        set *(&map).buckets[i] = 2147483647;
+    }
 
-    insert(&map, 1, 1);
+    #def HashMap map = makemap(4u16);
+    #insert(&map, 1, 1);
     
     return 0;
 }

@@ -198,23 +198,23 @@ Array indexing uses `u16`:
 def &i32 arr = (&arr)[0u16];
 ```
 
-## Most things grow at the start. Structs grow at the end
+## Resizing
 ```
 def i32 x = 0;
 ```
 Here is how that is represented on the stack:
 ```
-<SIZE> <DATA>
-<4>    <0>
+<DATA> <SIZE>
+<0>    <4>
 ```
 And when we resize it...
 ```
 resize(&x, 8);
 ```
-A new size tag gets inserted at the start.
+A new size tag gets inserted.
 ```
-<SIZE> <--DATA-->
-<8>    <4>    <0>
+<--DATA-->    <SIZE>
+<0>    <4>    <8>
 ```
 So this program will exit with the exit code `4`:
 ```
@@ -225,7 +225,7 @@ i32 main() {
 }
 ```
 
-Structs on the other-hand...
+Structs are the same way.
 ```
 struct MyStruct {
     i32 first,
@@ -238,20 +238,20 @@ my_struct.first = 1;
 my_struct.second = 2;
 my_struct.third = 3;
 ```
-Are stored like so:
+They are stored like so:
 ```
-<SIZE> <------DATA----->
-<12>   <3>    <2>    <1>
+<------DATA----->    <SIZE>
+<3>    <2>    <1>    <12>
 ```
 And if we resize...
 ```
 resize(&my_struct, 16);
 ```
 ```
-<SIZE> <----------DATA-------->
-<16>   <12>   <3>    <2>    <1>
+<----------DATA-------->    <SIZE>
+<1>   <2>    <3>    <12>    <16>
 ```
-This program will exit with the exit code `1`:
+This program will exit with the exit code `12`:
 ```
 struct MyStruct {
     i32 first,
@@ -261,17 +261,12 @@ struct MyStruct {
 
 i32 main() {
     def MyStruct my_struct;
+    
     my_struct.first = 1;
     my_struct.second = 2;
     my_struct.third = 3;
 
     resize(&my_struct, 16);
-
-    # assert isnt a real keyword
-    # this is just an example
-    assert my_struct.first == 1;
-    assert my_struct.second == 2;
-    assert my_struct.third == 3;
 
     return my_struct.first;
 }
