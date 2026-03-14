@@ -1,5 +1,3 @@
-// TODO: need special container size tags. because inner type being resized breaks container size tag.
-
 use std::{
     collections::HashMap,
     fmt,

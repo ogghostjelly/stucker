@@ -1,79 +1,62 @@
 extern "C" void printf(u64 fmt, ...);
 
-HashMap insert(&HashMap map, i32 key, i32 value);
+[]Bucket insert(&[]Bucket map, u16 capacity, i32 key, i32 value);
 
 struct Bucket {
     i32 key,
     i32 value,
 }
 
-struct HashMap {
-    []Bucket buckets,
-    u16 capacity,
-}
-
-HashMap makemap(u16 capacity) {
+[]Bucket makemap(u16 capacity) {
     printf("makemap(%d)\n", capacity);
 
-    def HashMap map;
-    
-    set map.buckets = [as(u64)capacity]Bucket; 
-    set map.capacity = capacity;
+    def []Bucket map = [as(u64)capacity]Bucket; 
 
     for (def u16 i = 0u16; i < capacity; set i = i + 1u16) {
-        set *(&map).buckets[i].key = 2147483647;
-        set *(&map).buckets[i].value = 2147483647;
+        set *(&map)[i].key = 2147483647;
+        set *(&map)[i].value = 2147483647;
     }
 
     return map;
 }
 
-HashMap insert(&HashMap map, i32 key, i32 value) {
-    printf("insert(map, %d, %d)\n", key, value);
+[]Bucket insert(&[]Bucket map, &u16 capacity, i32 key, i32 value) {
+    printf("insert(map, %d, %d, %d)\n", *capacity, key, value);
 
-    def u16 i = as(u16)(key % as(i32)*map.capacity);
+    def u16 i = as(u16)(key % as(i32)*capacity);
 
-    def u8 key_matches = *map.buckets[i].key == key;
-    def u8 is_empty = *map.buckets[i].key == 2147483647 && *map.buckets[i].value == 2147483647;
+    def u8 key_matches = *map[i].key == key;
+    def u8 is_empty = *map[i].key == 2147483647 && *map[i].value == 2147483647;
     
     if (key_matches || is_empty) {
-        set *map.buckets[i].key = key;
-        set *map.buckets[i].value = value;
+        set *map[i].key = key;
+        set *map[i].value = value;
     } else {
-        def u16 new_cap = *map.capacity * 2u16;
-        def HashMap new_map = makemap(new_cap);
+        def u16 new_cap = *capacity * 2u16;
+        def []Bucket new_map = makemap(new_cap);
 
         for (def u16 i = 0u16; i < new_cap; set i = i + 1u16) {
-            printf("%d %d\n", *(&new_map).buckets[i].key, *(&new_map).buckets[i].value);
+            printf("%d %d\n", *(&new_map)[i].key, *(&new_map)[i].value);
         }
         
-        for (def u16 i = 0u16; i < new_cap; set i = i + 1u16) {
-            if (*map.buckets[i].key != 2147483647 && *map.buckets[i].value != 2147483647) {
-                insert(&new_map, *map.buckets[i].key, *map.buckets[i].value)
+        for (def u16 i = 0u16; i < *capacity; set i = i + 1u16) {
+            if (*map[i].key != 2147483647 && *map[i].value != 2147483647) {
+                insert(&new_map, &new_cap, *map[i].key, *map[i].value)
             }
         }
 
         set *map = new_map;
+        set *capacity = new_cap;
 
-        insert(map, key, value);
+        insert(map, capacity, key, value);
     }
-}
-
-struct Abc {
-    []i32 buckets,
 }
 
 i32 main() {
-    def Abc map;
+    def u16 capacity = 4u16;
+    def []Bucket map = makemap(capacity);
     
-    set map.buckets = [2u64]i32; 
-
-    for (def u16 i = 0u16; i < 2u16; set i = i + 1u16) {
-        set *(&map).buckets[i] = 2147483647;
-    }
-
-    #def HashMap map = makemap(4u16);
-    #insert(&map, 1, 1);
+    insert(&map, &capacity, 1, 1);
     
     return 0;
 }

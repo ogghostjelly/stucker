@@ -272,6 +272,26 @@ i32 main() {
 }
 ```
 
+## Resizing Containers is broken
+
+The following code will segfault.
+```
+struct MyContainer {
+    i32 value,
+}
+
+i32 main() {
+    def MyContainer x;
+    set x.value = 3;
+
+    resize(&x, 8);
+
+    return 0;
+}
+```
+
+You cannot resize data that is inside an array or inside a struct. This is because I'm lazy and can't be bothered to implement this functionality. I've spent too long on this dumbass project already ;-; let me [bee free](./media/bee.jpg)
+
 ## INT3
 
 You can manually insert `int3` NASM intructions with the `breakpoint` keyword.

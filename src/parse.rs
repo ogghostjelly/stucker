@@ -5,7 +5,7 @@ use crate::{
         Abi, DefAssignment, Expression, ExpressionType, ForStatement, Function, GlobalValue,
         Number, NumberType, SetAssignment, Statement, Struct,
     },
-    tokenize::{self, Token, Tokenizer},
+    tokenize::{self, Location, Token, Tokenizer},
 };
 
 pub struct Parser<R: io::Read> {
@@ -16,6 +16,10 @@ pub struct Parser<R: io::Read> {
 impl<R: io::Read> Parser<R> {
     pub fn new(rdr: R) -> Result<Self> {
         Self::from_tokenizer(Tokenizer::new(rdr)?)
+    }
+
+    pub fn loc(&self) -> &Location {
+        self.tokenizer.loc()
     }
 
     pub fn from_tokenizer(mut tokenizer: Tokenizer<R>) -> Result<Self> {
@@ -29,12 +33,11 @@ impl<R: io::Read> Parser<R> {
                 let (name, struc) = self.parse_struct()?;
                 Ok(Some((name, GlobalValue::Struct(struc))))
             }
-            Some(Token::Symbol(_)) => {
+            Some(_) => {
                 let (name, function) = self.parse_func()?;
                 Ok(Some((name, GlobalValue::Function(function))))
             }
             None => Ok(None),
-            _ => Err(Error::ExpectedSymbol),
         }
     }
 

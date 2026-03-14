@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, BufReader, Bytes, Read as _},
     num::{ParseFloatError, ParseIntError},
 };
@@ -8,13 +9,22 @@ use crate::ast::Number;
 pub struct Tokenizer<R: io::Read> {
     buf: Option<u8>,
     rdr: Bytes<BufReader<R>>,
+    loc: Location,
 }
 
 impl<R: io::Read> Tokenizer<R> {
     pub fn new(rdr: R) -> Result<Self> {
         let mut rdr = BufReader::new(rdr).bytes();
         let buf = rdr.next().transpose()?;
-        Ok(Self { buf, rdr })
+        Ok(Self {
+            buf,
+            rdr,
+            loc: Location { ln: 1, col: 0 },
+        })
+    }
+
+    pub fn loc(&self) -> &Location {
+        &self.loc
     }
 
     pub fn next_token(&mut self) -> Result<Option<Token>> {
@@ -177,6 +187,16 @@ impl<R: io::Read> Tokenizer<R> {
     pub fn pop(&mut self) -> Result<Option<u8>> {
         let old = self.buf;
         self.buf = self.rdr.next().transpose()?;
+
+        match old {
+            Some(b'\n') => {
+                self.loc.ln += 1;
+                self.loc.col = 0;
+            }
+            Some(_) => self.loc.col += 1,
+            None => {}
+        }
+
         Ok(old)
     }
 
@@ -205,6 +225,17 @@ impl<R: io::Read> Tokenizer<R> {
             }
             _ => Err(Error::Expected(ch as char)),
         }
+    }
+}
+
+pub struct Location {
+    pub ln: u16,
+    pub col: u16,
+}
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.ln, self.col)
     }
 }
 

@@ -25,12 +25,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = out.unwrap_or(PathBuf::from("a.asm"));
 
     let rdr = File::open(path)?;
+    let mut parser = Parser::new(rdr)?;
     let wtr = File::create(out)?;
 
-    match run(rdr, wtr) {
+    match run(&mut parser, wtr) {
         Ok(()) => {}
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("{e} {}", parser.loc());
             exit(1);
         }
     };
@@ -38,8 +39,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn run<R: io::Read, W: io::Write>(rdr: R, wtr: W) -> Result<(), Box<dyn std::error::Error>> {
-    let mut parser = Parser::new(rdr)?;
+fn run<R: io::Read, W: io::Write>(
+    parser: &mut Parser<R>,
+    wtr: W,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut codegen = Codegen::new(wtr);
 
     codegen.init()?;
