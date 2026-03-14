@@ -733,12 +733,11 @@ impl<'a, W: io::Write> FunctionCodegen<'a, W> {
         };
 
         self.nasm.idx2addr("rsi", &struct_ref_idx)?;
-        let idx = self.nasm.push_copy_addr()?;
 
-        write_asm!(self.nasm, "mov rbx, rsp")?;
-        write_asm!(self.nasm, "add rbx, [rbx]")?;
-        write_asm!(self.nasm, "sub rbx, 2")?;
-        write_asm!(self.nasm, "add word [rbx], {offset}")?;
+        write_asm!(self.nasm, "sub rsp, 2 ; struct_ref_access")?;
+        write_asm!(self.nasm, "mov word [rsp], {offset} ; struct_ref_access")?;
+        let idx = self.nasm.push_copy_addr()?;
+        write_asm!(self.nasm, "add qword [rsp], 2 ; struct_ref_access")?;
 
         Ok((ExpressionType::Ref(Box::new(field_ty)), idx))
     }

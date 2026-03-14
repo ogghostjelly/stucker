@@ -29,15 +29,13 @@ struct Bucket {
     def u8 is_empty = *map[i].key == 2147483647 && *map[i].value == 2147483647;
     
     if (key_matches || is_empty) {
+        printf("Matching slot found\n");
         set *map[i].key = key;
         set *map[i].value = value;
     } else {
+        printf("Full, reallocating\n");
         def u16 new_cap = *capacity * 2u16;
         def []Bucket new_map = makemap(new_cap);
-
-        for (def u16 i = 0u16; i < new_cap; set i = i + 1u16) {
-            printf("%d %d\n", *(&new_map)[i].key, *(&new_map)[i].value);
-        }
         
         for (def u16 i = 0u16; i < *capacity; set i = i + 1u16) {
             if (*map[i].key != 2147483647 && *map[i].value != 2147483647) {
@@ -52,11 +50,28 @@ struct Bucket {
     }
 }
 
+void print_map(&[]Bucket map, &u16 capacity) {
+    for (def u16 i = 0u16; i < *capacity; set i = i + 1u16) {
+        printf("map[%d]: { %d, %d }\n", i, *map[i].key,  *map[i].value);
+    }
+}
+
 i32 main() {
     def u16 capacity = 4u16;
     def []Bucket map = makemap(capacity);
+    printf("\n");
     
     insert(&map, &capacity, 1, 1);
+    print_map(&map, &capacity);
+    printf("\n");
+
+    insert(&map, &capacity, 1, 2);
+    print_map(&map, &capacity);
+    printf("\n");
+
+    insert(&map, &capacity, 5, 8);
+    print_map(&map, &capacity);
+    printf("\n");
     
     return 0;
 }

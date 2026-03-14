@@ -27,7 +27,7 @@ i32 main() {
 }
 ```
 
-This isn't the same as `alloca` because you can resize an existing allocation!
+This isn't the same as `alloca` because you can resize an existing allocation! You can find a working hashmap implementation without any heap allocations in the [`examples/`](./examples/) directory.
 
 The compiler outputs NASM assembly. You'll need to use `nasm` to build executable binaries. It's only been tested on x86-64 Linux. Any other OS or architecture isn't guaranteed to work. (and likely won't)
 
