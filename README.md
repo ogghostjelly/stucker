@@ -272,7 +272,7 @@ i32 main() {
 }
 ```
 
-## Resizing Containers is broken
+## Resizing values inside containers is broken
 
 The following code will segfault.
 ```
