@@ -5,7 +5,10 @@
 
 You've probably been told that the stack is only for fixed-size data and the heap must be used for dynamically-sized data. This isn't exactly true... 
 
-A language that implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations!
+I present to you, a language that implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations!
+
+> [!WARNING]
+> This is a toy language. So many segfaults...
 
 ```
 void double_size(&[]i32 arr, u64 size) {
@@ -25,7 +28,7 @@ i32 main() {
 }
 ```
 
-This isn't the same as `alloca` because you can resize an existing allocation! You can find a working hashmap implementation without any heap allocations in the [`examples/`](./examples/) directory.
+This isn't the same as [`alloca`](https://www.man7.org/linux/man-pages/man3/alloca.3.html) or [VLA](https://en.wikipedia.org/wiki/Variable-length_array)s because you can resize an existing allocation! You can find a working hashmap implementation without any heap allocations in the [`examples/`](./examples/) directory.
 
 The compiler outputs NASM assembly. You'll need to use `nasm` to build executable binaries. It's only been tested on x86-64 Linux. Any other OS or architecture isn't guaranteed to work. (and likely won't)
 
