@@ -1,13 +1,11 @@
 # Stucker
 
-Stack fucker.
-
 > [!NOTE]
 > And when Alexander saw the breadth of his dominion, he wept for there were no more stacks to fuck.
 
-They said you can't resize data on the stack. I said you can, you just need to make your own compiler.
+You've probably been told that the stack is only for fixed-size data and the heap must be used for dynamically-sized data. This isn't exactly true... 
 
-It implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations.
+A language that implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations!
 
 ```
 void double_size(&[]i32 arr, u64 size) {
