@@ -7,6 +7,8 @@ You've probably been told that the stack is only for fixed-size data and the hea
 
 I present to you, a language that implements it's own custom data-structure in stack memory that allows you to resize variables on the stack, without any heap allocations!
 
+You can see the accompanying blog post [here](https://ogghostjelly.github.io/slog/alloca2/index.html).
+
 > [!WARNING]
 > This is a toy language. So many segfaults...
 
@@ -249,8 +251,8 @@ And if we resize...
 resize(&my_struct, 16);
 ```
 ```
-<----------DATA-------->    <SIZE>
-<1>   <2>    <3>    <12>    <16>
+<----------DATA--------->    <SIZE>
+<3>    <2>    <1>    <12>    <16>
 ```
 This program will exit with the exit code `12`:
 ```
@@ -263,9 +265,9 @@ struct MyStruct {
 i32 main() {
     def MyStruct my_struct;
     
-    my_struct.first = 1;
-    my_struct.second = 2;
-    my_struct.third = 3;
+    set my_struct.first = 1;
+    set my_struct.second = 2;
+    set my_struct.third = 3;
 
     resize(&my_struct, 16);
 
