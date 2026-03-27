@@ -1,7 +1,7 @@
 # Stucker
 
 > [!NOTE]
-> And when Alexander saw the breadth of his dominion, he wept for there were no more stacks to fuck.
+> And when Alexander saw the breadth of his dominion, he wept for there were no more stacks to abuse.
 
 You've probably been told that the stack is only for fixed-size data and the heap must be used for dynamically-sized data. This isn't exactly true... 
 
